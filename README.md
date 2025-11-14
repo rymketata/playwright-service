@@ -14,6 +14,7 @@ A standalone Node.js service that uses Playwright and Browserless.io to analyze 
 1. **Browserless.io Account** (Free tier available)
    - Sign up at [browserless.io](https://www.browserless.io/)
    - Get your API token from the dashboard
+   - Note: Service uses the new endpoint `wss://production-sfo.browserless.io`
 
 ## Deployment
 

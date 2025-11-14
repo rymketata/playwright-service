@@ -39,7 +39,7 @@ app.post('/analyze', async (req, res) => {
       });
     }
 
-    const wsEndpoint = `wss://chrome.browserless.io?token=${BROWSERLESS_TOKEN}`;
+    const wsEndpoint = `wss://production-sfo.browserless.io?token=${BROWSERLESS_TOKEN}`;
     console.log('Connecting to Browserless.io...');
     browser = await chromium.connect(wsEndpoint);
 
