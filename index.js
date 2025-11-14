@@ -20,6 +20,8 @@ app.get('/', (req, res) => {
 app.post('/analyze', async (req, res) => {
   let browser;
 
+  req.setTimeout(100000);
+
   try {
     const { url, loginConfig } = req.body;
 
@@ -51,14 +53,14 @@ app.post('/analyze', async (req, res) => {
     const page = await context.newPage();
 
     console.log(`Navigating to: ${url}`);
-    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 20000 });
-    await page.waitForTimeout(1000);
+    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
+    await page.waitForTimeout(500);
 
     if (loginConfig && loginConfig.loginUrl) {
       console.log('Login credentials provided, attempting authentication...');
 
-      await page.goto(loginConfig.loginUrl, { waitUntil: 'domcontentloaded', timeout: 20000 });
-      await page.waitForTimeout(1000);
+      await page.goto(loginConfig.loginUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
+      await page.waitForTimeout(500);
 
       const usernameInput = await page.locator(`input[name="${loginConfig.usernameField}"], input[id="${loginConfig.usernameField}"]`).first();
       const passwordInput = await page.locator(`input[name="${loginConfig.passwordField}"], input[id="${loginConfig.passwordField}"]`).first();
@@ -114,10 +116,10 @@ app.post('/analyze', async (req, res) => {
 
     const allFeatures = [];
 
-    for (const pageUrl of allPages.slice(0, 3)) {
+    for (const pageUrl of allPages.slice(0, 2)) {
       try {
-        await page.goto(pageUrl, { waitUntil: 'domcontentloaded', timeout: 20000 });
-        await page.waitForTimeout(1000);
+        await page.goto(pageUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
+        await page.waitForTimeout(500);
         const features = await detectFeaturesFromPage(page);
         allFeatures.push(...features.map(f => ({ ...f, pageUrl })));
       } catch (e) {
