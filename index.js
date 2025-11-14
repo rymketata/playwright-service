@@ -13,8 +13,49 @@ app.get('/', (req, res) => {
   res.json({
     status: 'ok',
     service: 'Playwright Test Generator',
-    version: '1.0.0'
+    version: '1.0.0',
+    browserlessConfigured: !!BROWSERLESS_TOKEN
   });
+});
+
+app.get('/test-connection', async (req, res) => {
+  let browser;
+  try {
+    if (!BROWSERLESS_TOKEN) {
+      return res.status(500).json({
+        success: false,
+        message: 'BROWSERLESS_TOKEN not configured'
+      });
+    }
+
+    console.log('Testing connection to Browserless.io...');
+    const wsEndpoint = `wss://production-sfo.browserless.io?token=${BROWSERLESS_TOKEN}`;
+
+    browser = await chromium.connect(wsEndpoint, { timeout: 30000 });
+    console.log('✓ Connected successfully');
+
+    const context = await browser.newContext();
+    const page = await context.newPage();
+    await page.goto('https://example.com', { timeout: 20000 });
+    console.log('✓ Test page loaded');
+
+    await browser.close();
+    console.log('✓ Test completed successfully');
+
+    res.json({
+      success: true,
+      message: 'Browserless.io connection successful'
+    });
+  } catch (error) {
+    console.error('Connection test failed:', error);
+    if (browser) {
+      await browser.close().catch(() => {});
+    }
+    res.status(500).json({
+      success: false,
+      message: `Connection test failed: ${error.message}`
+    });
+  }
 });
 
 app.post('/analyze', async (req, res) => {
@@ -43,23 +84,54 @@ app.post('/analyze', async (req, res) => {
 
     const wsEndpoint = `wss://production-sfo.browserless.io?token=${BROWSERLESS_TOKEN}`;
     console.log('Connecting to Browserless.io...');
-    browser = await chromium.connect(wsEndpoint);
 
+    try {
+      browser = await chromium.connect(wsEndpoint, { timeout: 30000 });
+      console.log('✓ Connected to browser successfully');
+    } catch (connectError) {
+      console.error('Failed to connect to Browserless.io:', connectError.message);
+      return res.status(500).json({
+        success: false,
+        message: `Browser connection failed: ${connectError.message}. Please check your BROWSERLESS_TOKEN or try again.`
+      });
+    }
+
+    console.log('Creating browser context...');
     const context = await browser.newContext({
       viewport: { width: 1920, height: 1080 },
       userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
     });
 
+    console.log('Opening new page...');
     const page = await context.newPage();
 
     console.log(`Navigating to: ${url}`);
-    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
+    try {
+      await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
+      console.log('✓ Page loaded successfully');
+    } catch (navError) {
+      await browser.close();
+      console.error('Navigation failed:', navError.message);
+      return res.status(500).json({
+        success: false,
+        message: `Failed to load ${url}: ${navError.message}`
+      });
+    }
     await page.waitForTimeout(500);
 
     if (loginConfig && loginConfig.loginUrl) {
       console.log('Login credentials provided, attempting authentication...');
 
-      await page.goto(loginConfig.loginUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
+      try {
+        await page.goto(loginConfig.loginUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
+        console.log('✓ Login page loaded');
+      } catch (loginNavError) {
+        await browser.close();
+        return res.json({
+          success: false,
+          message: `Failed to load login page: ${loginNavError.message}`
+        });
+      }
       await page.waitForTimeout(500);
 
       const usernameInput = await page.locator(`input[name="${loginConfig.usernameField}"], input[id="${loginConfig.usernameField}"]`).first();
@@ -92,9 +164,10 @@ app.post('/analyze', async (req, res) => {
         });
       }
 
-      console.log('Login successful, analyzing authenticated pages...');
+      console.log('✓ Login successful, analyzing authenticated pages...');
     }
 
+    console.log('Discovering pages to analyze...');
     const allPages = [page.url()];
     const links = await page.locator('a[href]').evaluateAll(
       (elements) => elements
@@ -115,28 +188,36 @@ app.post('/analyze', async (req, res) => {
     }
 
     const allFeatures = [];
+    console.log(`Analyzing ${Math.min(allPages.length, 2)} pages for features...`);
 
     for (const pageUrl of allPages.slice(0, 2)) {
       try {
+        console.log(`→ Analyzing: ${pageUrl}`);
         await page.goto(pageUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
         await page.waitForTimeout(500);
         const features = await detectFeaturesFromPage(page);
+        console.log(`  Found ${features.length} features`);
         allFeatures.push(...features.map(f => ({ ...f, pageUrl })));
       } catch (e) {
-        console.log(`Failed to analyze page: ${pageUrl}`);
+        console.log(`  ✗ Failed to analyze: ${pageUrl} - ${e.message}`);
       }
     }
 
+    console.log('Closing browser...');
     await browser.close();
+    console.log('✓ Browser closed');
 
     if (allFeatures.length === 0) {
+      console.log('⚠ No features detected');
       return res.json({
         success: false,
         message: "No functional elements detected. No tests generated.",
       });
     }
 
+    console.log(`Generating test cases from ${allFeatures.length} features...`);
     const tests = generateTestCasesFromFeatures(allFeatures);
+    console.log(`✓ Generated ${tests.length} test cases`);
 
     res.json({
       success: true,
