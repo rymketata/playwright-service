@@ -1,0 +1,19 @@
+{
+  "name": "playwright-test-generator",
+  "version": "1.0.0",
+  "description": "Playwright service for automated test generation",
+  "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "node index.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "playwright-core": "^1.40.0",
+    "cors": "^2.8.5"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
