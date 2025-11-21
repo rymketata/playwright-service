@@ -79,7 +79,11 @@ app.post('/analyze', async (req, res) => {
   req.setTimeout(120000);
 
   try {
+    console.log('=== RECEIVED REQUEST ===');
+    console.log('Request body:', JSON.stringify(req.body, null, 2));
+
     const { url, urls = [], loginConfig } = req.body;
+    console.log('Extracted - url:', url, 'urls:', urls, 'urls.length:', urls?.length);
 
     if (!url && (!urls || urls.length === 0)) {
       return res.status(400).json({
@@ -96,7 +100,8 @@ app.post('/analyze', async (req, res) => {
     }
 
     const targetUrls = urls && urls.length > 0 ? urls : [url];
-    console.log(`Analyzing ${targetUrls.length} page(s)`);
+    console.log(`=== ANALYZING ${targetUrls.length} PAGE(S) ===`);
+    console.log('Target URLs:', targetUrls);
 
     if (loginConfig) {
       console.log(`Login config provided for: ${loginConfig.loginUrl}`);
