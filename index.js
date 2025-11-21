@@ -127,23 +127,30 @@ app.post('/analyze', async (req, res) => {
 
     const result = await response.json();
     console.log(`✓ Script executed successfully`);
+    console.log('Result:', JSON.stringify(result, null, 2));
 
     if (result.error) {
       console.error('Script execution error:', result.error);
       return res.status(500).json({
         success: false,
-        message: result.error
+        message: result.error,
+        debug: result
       });
     }
 
     if (!result.features || result.features.length === 0) {
+      console.log('⚠️ No features found');
+      console.log('Login success:', result.loginSuccess);
+      console.log('Pages analyzed:', result.pagesAnalyzed);
+      console.log('Logs:', result.logs);
       return res.json({
         success: false,
         message: "No functional elements detected after JavaScript execution.",
         debug: {
           loginSuccess: result.loginSuccess,
           pagesAnalyzed: result.pagesAnalyzed,
-          screenshots: result.screenshots
+          logs: result.logs,
+          fullResult: result
         }
       });
     }
@@ -176,14 +183,26 @@ export default async ({ page }) => {
   const urls = ${urlsJson};
   const loginConfig = ${loginJson};
   const features = [];
+  const logs = [];
   let loginSuccess = false;
 
+  const log = (msg) => {
+    logs.push(msg);
+  };
+
   try {
+    log('Script started - Analyzing ' + urls.length + ' page(s)');
+
     // Step 1: Handle login if credentials provided
     if (loginConfig && loginConfig.loginUrl && loginConfig.username && loginConfig.password) {
-      console.log('Navigating to login page:', loginConfig.loginUrl);
+      log('Navigating to login page: ' + loginConfig.loginUrl);
       await page.goto(loginConfig.loginUrl, { waitUntil: 'networkidle0', timeout: 30000 });
       await page.waitForTimeout(2000);
+
+      const htmlPreview = await page.content();
+      log('Page loaded (' + htmlPreview.length + ' bytes)');
+      log('HTML preview: ' + htmlPreview.substring(0, 300));
+      log('Looking for login form...');
 
       // Try to find and fill login form
       const usernameSelectors = [
@@ -207,7 +226,7 @@ export default async ({ page }) => {
         try {
           usernameInput = await page.$(selector);
           if (usernameInput) {
-            console.log('Found username field:', selector);
+            log('Found username field: ' + selector);
             break;
           }
         } catch (e) {}
@@ -218,14 +237,14 @@ export default async ({ page }) => {
         try {
           passwordInput = await page.$(selector);
           if (passwordInput) {
-            console.log('Found password field:', selector);
+            log('Found password field: ' + selector);
             break;
           }
         } catch (e) {}
       }
 
       if (usernameInput && passwordInput) {
-        console.log('Filling login credentials...');
+        log('Filling login credentials...');
         await usernameInput.type(loginConfig.username);
         await passwordInput.type(loginConfig.password);
 
@@ -243,14 +262,14 @@ export default async ({ page }) => {
           try {
             submitButton = await page.$(selector);
             if (submitButton) {
-              console.log('Found submit button:', selector);
+              log('Found submit button: ' + selector);
               break;
             }
           } catch (e) {}
         }
 
         if (submitButton) {
-          console.log('Clicking login button...');
+          log('Clicking login button...');
           await Promise.all([
             page.waitForNavigation({ waitUntil: 'networkidle0', timeout: 15000 }).catch(() => {}),
             submitButton.click()
@@ -258,27 +277,28 @@ export default async ({ page }) => {
 
           await page.waitForTimeout(3000);
           loginSuccess = true;
-          console.log('Login completed');
+          log('Login completed');
         } else {
-          console.log('Submit button not found, pressing Enter...');
+          log('Submit button not found, pressing Enter...');
           await passwordInput.press('Enter');
           await page.waitForTimeout(3000);
           loginSuccess = true;
         }
       } else {
-        console.log('Login form not found');
-        return { error: 'Login form not found on the page', features: [], loginSuccess: false };
+        log('Login form not found - username: ' + !!usernameInput + ', password: ' + !!passwordInput);
+        return { error: 'Login form not found on the page', features: [], loginSuccess: false, logs: logs };
       }
     }
 
     // Step 2: Analyze each URL
     for (let i = 0; i < urls.length; i++) {
       const targetUrl = urls[i];
-      console.log(\`Analyzing page \${i + 1}/\${urls.length}: \${targetUrl}\`);
+      log('Analyzing page ' + (i + 1) + '/' + urls.length + ': ' + targetUrl);
 
       try {
         await page.goto(targetUrl, { waitUntil: 'networkidle0', timeout: 30000 });
         await page.waitForTimeout(2000);
+        log('Page loaded, extracting elements...');
 
         // Extract elements after JavaScript execution
         const pageFeatures = await page.evaluate((pageUrl) => {
@@ -365,28 +385,30 @@ export default async ({ page }) => {
           return features;
         }, targetUrl);
 
-        console.log(\`Found \${pageFeatures.length} features on \${targetUrl}\`);
+        log('Found ' + pageFeatures.length + ' features on ' + targetUrl);
         features.push(...pageFeatures);
 
       } catch (error) {
-        console.error(\`Error analyzing \${targetUrl}:\`, error.message);
+        log('Error analyzing ' + targetUrl + ': ' + error.message);
       }
     }
 
-    console.log(\`Total features found: \${features.length}\`);
+    log('Total features found: ' + features.length);
 
     return {
       features,
       loginSuccess,
-      pagesAnalyzed: urls.length
+      pagesAnalyzed: urls.length,
+      logs: logs
     };
 
   } catch (error) {
-    console.error('Script error:', error.message);
+    log('Script error: ' + error.message);
     return {
       error: error.message,
       features: [],
-      loginSuccess: false
+      loginSuccess: false,
+      logs: logs
     };
   }
 };
