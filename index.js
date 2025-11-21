@@ -30,8 +30,6 @@ function getCDPWebSocketUrl() {
 
 function getAnalysisScript() {
   return `
-const puppeteer = require('puppeteer-core');
-
 module.exports = async ({ url, urls = [], loginConfig }) => {
   const features = [];
   const logs = [];
