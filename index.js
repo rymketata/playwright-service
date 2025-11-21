@@ -346,8 +346,55 @@ export default async ({ page }) => {
           ]);
 
           await wait(3000);
+
+          // Verify login success by checking for error messages or login form still present
+          log('Verifying login success...');
+          const loginFailed = await page.evaluate(() => {
+            // Check for error messages (French and English)
+            const errorSelectors = [
+              'div[class*="error"]', 'span[class*="error"]', 'p[class*="error"]',
+              'div[class*="alert"]', 'div[class*="danger"]', 'div[class*="invalid"]',
+              'div[role="alert"]', '[aria-invalid="true"]'
+            ];
+
+            for (const selector of errorSelectors) {
+              const elements = document.querySelectorAll(selector);
+              for (const el of elements) {
+                const text = el.textContent?.toLowerCase() || '';
+                // Check for common error messages
+                if (text.includes('incorrect') || text.includes('invalid') || text.includes('wrong') ||
+                    text.includes('failed') || text.includes('erreur') || text.includes('incorrecte') ||
+                    text.includes('invalide') || text.includes('échoué') || text.includes('echec')) {
+                  return { failed: true, message: el.textContent?.trim() || 'Login failed' };
+                }
+              }
+            }
+
+            // Check if password field is still present (usually means login failed)
+            const passwordField = document.querySelector('input[type="password"]');
+            const currentUrl = window.location.href;
+
+            // If password field exists and URL contains 'login', likely still on login page
+            if (passwordField && (currentUrl.includes('login') || currentUrl.includes('auth') || currentUrl.includes('signin'))) {
+              return { failed: true, message: 'Still on login page - credentials may be incorrect' };
+            }
+
+            return { failed: false, message: '' };
+          });
+
+          if (loginFailed.failed) {
+            log('Login failed: ' + loginFailed.message);
+            return {
+              error: 'Login failed: ' + loginFailed.message + '. Please verify your credentials.',
+              features: [],
+              loginSuccess: false,
+              pagesAnalyzed: 0,
+              logs: logs
+            };
+          }
+
           loginSuccess = true;
-          log('Login completed');
+          log('Login completed successfully');
         } else {
           // Fallback: try to find any clickable element with login/connexion text
           log('Submit button not found with standard selectors, trying generic search...');
@@ -378,15 +425,58 @@ export default async ({ page }) => {
               }
             });
             await wait(3000);
-            loginSuccess = true;
             log('Login submitted via generic element');
           } else {
             log('No submit button found, pressing Enter...');
             await passwordInput.press('Enter');
             await wait(3000);
-            loginSuccess = true;
             log('Login submitted via Enter key');
           }
+
+          // Verify login success for fallback methods too
+          log('Verifying login success...');
+          const loginFailed = await page.evaluate(() => {
+            const errorSelectors = [
+              'div[class*="error"]', 'span[class*="error"]', 'p[class*="error"]',
+              'div[class*="alert"]', 'div[class*="danger"]', 'div[class*="invalid"]',
+              'div[role="alert"]', '[aria-invalid="true"]'
+            ];
+
+            for (const selector of errorSelectors) {
+              const elements = document.querySelectorAll(selector);
+              for (const el of elements) {
+                const text = el.textContent?.toLowerCase() || '';
+                if (text.includes('incorrect') || text.includes('invalid') || text.includes('wrong') ||
+                    text.includes('failed') || text.includes('erreur') || text.includes('incorrecte') ||
+                    text.includes('invalide') || text.includes('échoué') || text.includes('echec')) {
+                  return { failed: true, message: el.textContent?.trim() || 'Login failed' };
+                }
+              }
+            }
+
+            const passwordField = document.querySelector('input[type="password"]');
+            const currentUrl = window.location.href;
+
+            if (passwordField && (currentUrl.includes('login') || currentUrl.includes('auth') || currentUrl.includes('signin'))) {
+              return { failed: true, message: 'Still on login page - credentials may be incorrect' };
+            }
+
+            return { failed: false, message: '' };
+          });
+
+          if (loginFailed.failed) {
+            log('Login failed: ' + loginFailed.message);
+            return {
+              error: 'Login failed: ' + loginFailed.message + '. Please verify your credentials.',
+              features: [],
+              loginSuccess: false,
+              pagesAnalyzed: 0,
+              logs: logs
+            };
+          }
+
+          loginSuccess = true;
+          log('Login completed successfully');
         }
       } else {
         log('Login form not found - username: ' + !!usernameInput + ', password: ' + !!passwordInput);
