@@ -31,7 +31,7 @@ app.get('/test-connection', async (req, res) => {
     console.log('Testing Browserless HTTP API...');
     console.log('Token length:', BROWSERLESS_TOKEN.length);
 
-    const apiUrl = `https://chrome.browserless.io/content?token=${BROWSERLESS_TOKEN}`;
+    const apiUrl = `https://production-sfo.browserless.io/content?token=${BROWSERLESS_TOKEN}`;
 
     const response = await fetch(apiUrl, {
       method: 'POST',
@@ -98,7 +98,7 @@ app.post('/analyze', async (req, res) => {
 
     console.log(`Analyzing website: ${url}`);
 
-    const apiUrl = `https://chrome.browserless.io/content?token=${BROWSERLESS_TOKEN}`;
+    const apiUrl = `https://production-sfo.browserless.io/content?token=${BROWSERLESS_TOKEN}`;
 
     const response = await fetch(apiUrl, {
       method: 'POST',
