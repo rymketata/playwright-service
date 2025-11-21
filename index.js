@@ -201,15 +201,20 @@ export default async ({ page }) => {
 
   try {
     log('Script started - Analyzing ' + urls.length + ' page(s)');
+
+    // Support both formats: username/password OR testUsername/testPassword
+    const username = loginConfig?.username || loginConfig?.testUsername;
+    const password = loginConfig?.password || loginConfig?.testPassword;
+
     log('Login config received: ' + JSON.stringify({
       hasConfig: !!loginConfig,
       hasLoginUrl: !!(loginConfig && loginConfig.loginUrl),
-      hasUsername: !!(loginConfig && loginConfig.username),
-      hasPassword: !!(loginConfig && loginConfig.password)
+      hasUsername: !!username,
+      hasPassword: !!password
     }));
 
     // Step 1: Handle login if credentials provided
-    if (loginConfig && loginConfig.loginUrl && loginConfig.username && loginConfig.password) {
+    if (loginConfig && loginConfig.loginUrl && username && password) {
       log('Navigating to login page: ' + loginConfig.loginUrl);
       await page.goto(loginConfig.loginUrl, { waitUntil: 'networkidle0', timeout: 30000 });
       await wait(2000);
@@ -219,21 +224,46 @@ export default async ({ page }) => {
       log('HTML preview: ' + htmlPreview.substring(0, 300));
       log('Looking for login form...');
 
-      // Try to find and fill login form
+      // Try to find and fill login form with multilingual support
       const usernameSelectors = [
         'input[name="username"]',
         'input[name="email"]',
+        'input[name="login"]',
+        'input[name="user"]',
+        'input[name="nom"]',
         'input[type="email"]',
+        'input[type="text"][name*="email" i]',
+        'input[type="text"][name*="user" i]',
         'input[placeholder*="username" i]',
         'input[placeholder*="email" i]',
+        'input[placeholder*="nom" i]',
+        'input[placeholder*="utilisateur" i]',
+        'input[placeholder*="identifiant" i]',
         'input[id*="username" i]',
-        'input[id*="email" i]'
+        'input[id*="email" i]',
+        'input[id*="login" i]',
+        'input[id*="user" i]',
+        'input[aria-label*="email" i]',
+        'input[aria-label*="username" i]',
+        'input[aria-label*="nom" i]'
       ];
 
       const passwordSelectors = [
         'input[name="password"]',
+        'input[name="passwd"]',
+        'input[name="pwd"]',
+        'input[name="motdepasse"]',
+        'input[name="mot_de_passe"]',
         'input[type="password"]',
-        'input[id*="password" i]'
+        'input[id*="password" i]',
+        'input[id*="passwd" i]',
+        'input[id*="pwd" i]',
+        'input[id*="motdepasse" i]',
+        'input[placeholder*="password" i]',
+        'input[placeholder*="mot de passe" i]',
+        'input[placeholder*="motdepasse" i]',
+        'input[aria-label*="password" i]',
+        'input[aria-label*="mot de passe" i]'
       ];
 
       let usernameInput = null;
@@ -260,16 +290,24 @@ export default async ({ page }) => {
 
       if (usernameInput && passwordInput) {
         log('Filling login credentials...');
-        await usernameInput.type(loginConfig.username);
-        await passwordInput.type(loginConfig.password);
+        await usernameInput.type(username);
+        await passwordInput.type(password);
 
-        // Find and click submit button
+        // Find and click submit button with multilingual support
         const submitSelectors = [
           'button[type="submit"]',
           'input[type="submit"]',
           'button:has-text("Login")',
+          'button:has-text("Log in")',
           'button:has-text("Sign in")',
-          'button:has-text("Se connecter")'
+          'button:has-text("Se connecter")',
+          'button:has-text("Connexion")',
+          'button:has-text("Entrer")',
+          'button:has-text("Valider")',
+          'button[value*="login" i]',
+          'button[value*="connexion" i]',
+          'input[value*="login" i]',
+          'input[value*="connexion" i]'
         ];
 
         let submitButton = null;
