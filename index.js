@@ -110,7 +110,8 @@ app.post('/analyze', async (req, res) => {
         gotoOptions: {
           waitUntil: 'networkidle0',
           timeout: 30000
-        }
+        },
+        waitForTimeout: 2000
       }),
       signal: AbortSignal.timeout(60000)
     });
@@ -130,13 +131,27 @@ app.post('/analyze', async (req, res) => {
     const dom = new JSDOM(html);
     const document = dom.window.document;
 
+    const stats = {
+      forms: document.querySelectorAll('form').length,
+      buttons: document.querySelectorAll('button, input[type="button"], input[type="submit"]').length,
+      links: document.querySelectorAll('a[href]').length,
+      inputs: document.querySelectorAll('input, select, textarea').length
+    };
+    console.log('Page elements:', JSON.stringify(stats));
+
     const features = detectFeaturesFromDOM(document, url);
     console.log(`Found ${features.length} features`);
 
     if (features.length === 0) {
+      console.log('HTML preview:', html.substring(0, 500));
       return res.json({
         success: false,
-        message: "No functional elements detected. No tests generated."
+        message: "No functional elements detected. The page might be JavaScript-heavy or require authentication.",
+        debug: {
+          htmlSize: html.length,
+          stats: stats,
+          htmlPreview: html.substring(0, 200)
+        }
       });
     }
 
