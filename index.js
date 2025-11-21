@@ -294,6 +294,7 @@ export default async ({ page }) => {
         await passwordInput.type(password);
 
         // Find and click submit button with multilingual support
+        // Including div/span for React Native Web and modern frameworks
         const submitSelectors = [
           'button[type="submit"]',
           'input[type="submit"]',
@@ -307,7 +308,23 @@ export default async ({ page }) => {
           'button[value*="login" i]',
           'button[value*="connexion" i]',
           'input[value*="login" i]',
-          'input[value*="connexion" i]'
+          'input[value*="connexion" i]',
+          // React Native Web, Vue.js, and other frameworks using div/span
+          'div[role="button"]:has-text("Se connecter")',
+          'div[role="button"]:has-text("Connexion")',
+          'div[role="button"]:has-text("Login")',
+          'div[role="button"]:has-text("Sign in")',
+          'div[tabindex="0"]:has-text("Se connecter")',
+          'div[tabindex="0"]:has-text("Connexion")',
+          'div[tabindex="0"]:has-text("Login")',
+          'div[tabindex="0"]:has-text("Sign in")',
+          'span[role="button"]:has-text("Se connecter")',
+          'span[role="button"]:has-text("Login")',
+          // Generic clickable elements near password fields
+          'div[class*="btn"]:has-text("Se connecter")',
+          'div[class*="btn"]:has-text("Login")',
+          'div[class*="button"]:has-text("Se connecter")',
+          'div[class*="button"]:has-text("Login")'
         ];
 
         let submitButton = null;
@@ -332,10 +349,44 @@ export default async ({ page }) => {
           loginSuccess = true;
           log('Login completed');
         } else {
-          log('Submit button not found, pressing Enter...');
-          await passwordInput.press('Enter');
-          await wait(3000);
-          loginSuccess = true;
+          // Fallback: try to find any clickable element with login/connexion text
+          log('Submit button not found with standard selectors, trying generic search...');
+
+          const genericSubmit = await page.evaluate(() => {
+            const elements = document.querySelectorAll('button, div[role="button"], div[tabindex="0"], span[role="button"], a, div[class*="btn"], div[class*="button"]');
+            for (const el of elements) {
+              const text = el.textContent?.toLowerCase() || '';
+              if (text.includes('connect') || text.includes('login') || text.includes('sign in') ||
+                  text.includes('entrer') || text.includes('valider')) {
+                return true;
+              }
+            }
+            return false;
+          });
+
+          if (genericSubmit) {
+            log('Found generic clickable element, clicking...');
+            await page.evaluate(() => {
+              const elements = document.querySelectorAll('button, div[role="button"], div[tabindex="0"], span[role="button"], a, div[class*="btn"], div[class*="button"]');
+              for (const el of elements) {
+                const text = el.textContent?.toLowerCase() || '';
+                if (text.includes('connect') || text.includes('login') || text.includes('sign in') ||
+                    text.includes('entrer') || text.includes('valider')) {
+                  el.click();
+                  return;
+                }
+              }
+            });
+            await wait(3000);
+            loginSuccess = true;
+            log('Login submitted via generic element');
+          } else {
+            log('No submit button found, pressing Enter...');
+            await passwordInput.press('Enter');
+            await wait(3000);
+            loginSuccess = true;
+            log('Login submitted via Enter key');
+          }
         }
       } else {
         log('Login form not found - username: ' + !!usernameInput + ', password: ' + !!passwordInput);
