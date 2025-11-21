@@ -100,13 +100,6 @@ app.post('/analyze', async (req, res) => {
 
     if (loginConfig) {
       console.log(`Login config provided for: ${loginConfig.loginUrl}`);
-      console.log(`Login config details:`, JSON.stringify({
-        hasUsername: !!loginConfig.username,
-        hasPassword: !!loginConfig.password,
-        loginUrl: loginConfig.loginUrl
-      }));
-    } else {
-      console.log('No login config provided');
     }
 
     // Build the Playwright script
@@ -134,30 +127,23 @@ app.post('/analyze', async (req, res) => {
 
     const result = await response.json();
     console.log(`✓ Script executed successfully`);
-    console.log('Result:', JSON.stringify(result, null, 2));
 
     if (result.error) {
       console.error('Script execution error:', result.error);
       return res.status(500).json({
         success: false,
-        message: result.error,
-        debug: result
+        message: result.error
       });
     }
 
     if (!result.features || result.features.length === 0) {
-      console.log('⚠️ No features found');
-      console.log('Login success:', result.loginSuccess);
-      console.log('Pages analyzed:', result.pagesAnalyzed);
-      console.log('Logs:', result.logs);
       return res.json({
         success: false,
         message: "No functional elements detected after JavaScript execution.",
         debug: {
           loginSuccess: result.loginSuccess,
           pagesAnalyzed: result.pagesAnalyzed,
-          logs: result.logs,
-          fullResult: result
+          screenshots: result.screenshots
         }
       });
     }
@@ -190,34 +176,14 @@ export default async ({ page }) => {
   const urls = ${urlsJson};
   const loginConfig = ${loginJson};
   const features = [];
-  const logs = [];
   let loginSuccess = false;
 
-  const log = (msg) => {
-    logs.push(msg);
-  };
-
-  const wait = (ms) => new Promise(resolve => setTimeout(resolve, ms));
-
   try {
-    log('Script started - Analyzing ' + urls.length + ' page(s)');
-    log('Login config received: ' + JSON.stringify({
-      hasConfig: !!loginConfig,
-      hasLoginUrl: !!(loginConfig && loginConfig.loginUrl),
-      hasUsername: !!(loginConfig && loginConfig.username),
-      hasPassword: !!(loginConfig && loginConfig.password)
-    }));
-
     // Step 1: Handle login if credentials provided
     if (loginConfig && loginConfig.loginUrl && loginConfig.username && loginConfig.password) {
-      log('Navigating to login page: ' + loginConfig.loginUrl);
+      console.log('Navigating to login page:', loginConfig.loginUrl);
       await page.goto(loginConfig.loginUrl, { waitUntil: 'networkidle0', timeout: 30000 });
-      await wait(2000);
-
-      const htmlPreview = await page.content();
-      log('Page loaded (' + htmlPreview.length + ' bytes)');
-      log('HTML preview: ' + htmlPreview.substring(0, 300));
-      log('Looking for login form...');
+      await page.waitForTimeout(2000);
 
       // Try to find and fill login form
       const usernameSelectors = [
@@ -241,7 +207,7 @@ export default async ({ page }) => {
         try {
           usernameInput = await page.$(selector);
           if (usernameInput) {
-            log('Found username field: ' + selector);
+            console.log('Found username field:', selector);
             break;
           }
         } catch (e) {}
@@ -252,14 +218,14 @@ export default async ({ page }) => {
         try {
           passwordInput = await page.$(selector);
           if (passwordInput) {
-            log('Found password field: ' + selector);
+            console.log('Found password field:', selector);
             break;
           }
         } catch (e) {}
       }
 
       if (usernameInput && passwordInput) {
-        log('Filling login credentials...');
+        console.log('Filling login credentials...');
         await usernameInput.type(loginConfig.username);
         await passwordInput.type(loginConfig.password);
 
@@ -277,43 +243,42 @@ export default async ({ page }) => {
           try {
             submitButton = await page.$(selector);
             if (submitButton) {
-              log('Found submit button: ' + selector);
+              console.log('Found submit button:', selector);
               break;
             }
           } catch (e) {}
         }
 
         if (submitButton) {
-          log('Clicking login button...');
+          console.log('Clicking login button...');
           await Promise.all([
             page.waitForNavigation({ waitUntil: 'networkidle0', timeout: 15000 }).catch(() => {}),
             submitButton.click()
           ]);
 
-          await wait(3000);
+          await page.waitForTimeout(3000);
           loginSuccess = true;
-          log('Login completed');
+          console.log('Login completed');
         } else {
-          log('Submit button not found, pressing Enter...');
+          console.log('Submit button not found, pressing Enter...');
           await passwordInput.press('Enter');
-          await wait(3000);
+          await page.waitForTimeout(3000);
           loginSuccess = true;
         }
       } else {
-        log('Login form not found - username: ' + !!usernameInput + ', password: ' + !!passwordInput);
-        return { error: 'Login form not found on the page', features: [], loginSuccess: false, logs: logs };
+        console.log('Login form not found');
+        return { error: 'Login form not found on the page', features: [], loginSuccess: false };
       }
     }
 
     // Step 2: Analyze each URL
     for (let i = 0; i < urls.length; i++) {
       const targetUrl = urls[i];
-      log('Analyzing page ' + (i + 1) + '/' + urls.length + ': ' + targetUrl);
+      console.log(\`Analyzing page \${i + 1}/\${urls.length}: \${targetUrl}\`);
 
       try {
         await page.goto(targetUrl, { waitUntil: 'networkidle0', timeout: 30000 });
-        await wait(2000);
-        log('Page loaded, extracting elements...');
+        await page.waitForTimeout(2000);
 
         // Extract elements after JavaScript execution
         const pageFeatures = await page.evaluate((pageUrl) => {
@@ -400,30 +365,28 @@ export default async ({ page }) => {
           return features;
         }, targetUrl);
 
-        log('Found ' + pageFeatures.length + ' features on ' + targetUrl);
+        console.log(\`Found \${pageFeatures.length} features on \${targetUrl}\`);
         features.push(...pageFeatures);
 
       } catch (error) {
-        log('Error analyzing ' + targetUrl + ': ' + error.message);
+        console.error(\`Error analyzing \${targetUrl}:\`, error.message);
       }
     }
 
-    log('Total features found: ' + features.length);
+    console.log(\`Total features found: \${features.length}\`);
 
     return {
       features,
       loginSuccess,
-      pagesAnalyzed: urls.length,
-      logs: logs
+      pagesAnalyzed: urls.length
     };
 
   } catch (error) {
-    log('Script error: ' + error.message);
+    console.error('Script error:', error.message);
     return {
       error: error.message,
       features: [],
-      loginSuccess: false,
-      logs: logs
+      loginSuccess: false
     };
   }
 };
