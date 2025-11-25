@@ -7,30 +7,550 @@ app.use(express.json({ limit: '10mb' }));
 const BROWSERLESS_TOKEN = process.env.BROWSERLESS_TOKEN;
 
 app.get('/health', (req, res) => {
+  if (!BROWSERLESS_TOKEN) {
+    return res.status(500).json({
+      status: 'unhealthy',
+      message: 'BROWSERLESS_TOKEN not configured'
+    });
+  }
+
   res.json({
     status: 'healthy',
-    service: 'Playwright Test Generator (Simplified)',
-    version: '3.0.0',
+    timestamp: new Date().toISOString(),
     browserlessConfigured: !!BROWSERLESS_TOKEN
   });
 });
 
-console.log('Playwright Test Generator (Simplified) running on port', PORT);
-console.log('Browserless token configured:', !!BROWSERLESS_TOKEN);
+function getCDPWebSocketUrl() {
+  if (!BROWSERLESS_TOKEN) {
+    throw new Error('BROWSERLESS_TOKEN not configured');
+  }
+  return `wss://production-sfo.browserless.io?token=${BROWSERLESS_TOKEN}`;
+}
 
-app.listen(PORT, '0.0.0.0', () => {
-  console.log(`Server listening on port ${PORT}`);
-});
+function getAnalysisScript() {
+  return `
+const puppeteer = require('puppeteer-core');
+
+module.exports = async ({ url, urls = [], loginConfig }) => {
+  const features = [];
+  const logs = [];
+  let loginSuccess = false;
+
+  const log = (msg) => {
+    logs.push(msg);
+  };
+
+  const wait = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
+  try {
+    log('Script started - Analyzing ' + urls.length + ' page(s)');
+
+    // Support both formats: username/password OR testUsername/testPassword
+    const username = loginConfig?.username || loginConfig?.testUsername;
+    const password = loginConfig?.password || loginConfig?.testPassword;
+
+    log('Login config received: ' + JSON.stringify({
+      hasConfig: !!loginConfig,
+      hasLoginUrl: !!(loginConfig && loginConfig.loginUrl),
+      hasUsername: !!username,
+      hasPassword: !!password
+    }));
+
+    // Step 1: Handle login if credentials provided
+    if (loginConfig && loginConfig.loginUrl && username && password) {
+      log('Navigating to login page: ' + loginConfig.loginUrl);
+      await page.goto(loginConfig.loginUrl, { waitUntil: 'networkidle0', timeout: 30000 });
+      await wait(2000);
+
+      const htmlPreview = await page.content();
+      log('Page loaded (' + htmlPreview.length + ' bytes)');
+      log('HTML preview: ' + htmlPreview.substring(0, 300));
+      log('Looking for login form...');
+
+      // Login form detection logic
+      const usernameSelectors = [
+        'input[name="username"]',
+        'input[name="email"]',
+        'input[name="login"]',
+        'input[name="user"]',
+        'input[name="nom"]',
+        'input[type="email"]',
+        'input[type="text"][name*="email" i]',
+        'input[type="text"][name*="user" i]',
+        'input[placeholder*="username" i]',
+        'input[placeholder*="email" i]',
+        'input[placeholder*="nom" i]',
+        'input[placeholder*="utilisateur" i]',
+        'input[placeholder*="identifiant" i]',
+        'input[id*="username" i]',
+        'input[id*="email" i]',
+        'input[id*="login" i]',
+        'input[id*="user" i]',
+        'input[aria-label*="email" i]',
+        'input[aria-label*="username" i]',
+        'input[aria-label*="nom" i]'
+      ];
+
+      const passwordSelectors = [
+        'input[name="password"]',
+        'input[name="passwd"]',
+        'input[name="pwd"]',
+        'input[name="motdepasse"]',
+        'input[name="mot_de_passe"]',
+        'input[type="password"]',
+        'input[id*="password" i]',
+        'input[id*="passwd" i]',
+        'input[id*="pwd" i]',
+        'input[id*="motdepasse" i]',
+        'input[placeholder*="password" i]',
+        'input[placeholder*="mot de passe" i]',
+        'input[placeholder*="motdepasse" i]',
+        'input[aria-label*="password" i]',
+        'input[aria-label*="mot de passe" i]'
+      ];
+
+      let usernameInput = null;
+      for (const selector of usernameSelectors) {
+        try {
+          usernameInput = await page.$(selector);
+          if (usernameInput) {
+            log('Found username field: ' + selector);
+            break;
+          }
+        } catch (e) {}
+      }
+
+      let passwordInput = null;
+      for (const selector of passwordSelectors) {
+        try {
+          passwordInput = await page.$(selector);
+          if (passwordInput) {
+            log('Found password field: ' + selector);
+            break;
+          }
+        } catch (e) {}
+      }
+
+      if (usernameInput && passwordInput) {
+        log('Filling login credentials...');
+        await usernameInput.type(username);
+        await passwordInput.type(password);
+
+        const submitSelectors = [
+          'button[type="submit"]',
+          'input[type="submit"]',
+          'button:has-text("Login")',
+          'button:has-text("Log in")',
+          'button:has-text("Sign in")',
+          'button:has-text("Se connecter")',
+          'button:has-text("Connexion")',
+          'button:has-text("Entrer")',
+          'button:has-text("Valider")',
+          'button[value*="login" i]',
+          'button[value*="connexion" i]',
+          'input[value*="login" i]',
+          'input[value*="connexion" i]',
+          'div[role="button"]:has-text("Se connecter")',
+          'div[role="button"]:has-text("Connexion")',
+          'div[role="button"]:has-text("Login")',
+          'div[role="button"]:has-text("Sign in")',
+          'div[tabindex="0"]:has-text("Se connecter")',
+          'div[tabindex="0"]:has-text("Connexion")',
+          'div[tabindex="0"]:has-text("Login")',
+          'div[tabindex="0"]:has-text("Sign in")',
+          'span[role="button"]:has-text("Se connecter")',
+          'span[role="button"]:has-text("Login")',
+          'div[class*="btn"]:has-text("Se connecter")',
+          'div[class*="btn"]:has-text("Login")',
+          'div[class*="button"]:has-text("Se connecter")',
+          'div[class*="button"]:has-text("Login")'
+        ];
+
+        let submitButton = null;
+        for (const selector of submitSelectors) {
+          try {
+            submitButton = await page.$(selector);
+            if (submitButton) {
+              log('Found submit button: ' + selector);
+              break;
+            }
+          } catch (e) {}
+        }
+
+        if (submitButton) {
+          log('Clicking login button...');
+          await Promise.all([
+            page.waitForNavigation({ waitUntil: 'networkidle0', timeout: 15000 }).catch(() => {}),
+            submitButton.click()
+          ]);
+          await wait(2000);
+
+          log('Verifying login success...');
+          const loginFailed = await page.evaluate(() => {
+            const errorSelectors = [
+              'div[class*="error"]', 'span[class*="error"]', 'p[class*="error"]',
+              'div[class*="alert"]', 'div[class*="danger"]', 'div[class*="invalid"]',
+              'div[role="alert"]', '[aria-invalid="true"]'
+            ];
+
+            for (const selector of errorSelectors) {
+              const elements = document.querySelectorAll(selector);
+              for (const el of elements) {
+                const text = el.textContent?.toLowerCase() || '';
+                if (text.includes('incorrect') || text.includes('invalid') || text.includes('wrong') ||
+                    text.includes('failed') || text.includes('erreur') || text.includes('incorrecte') ||
+                    text.includes('invalide') || text.includes('échoué') || text.includes('echec')) {
+                  return { failed: true, message: el.textContent?.trim() || 'Login failed' };
+                }
+              }
+            }
+
+            const passwordField = document.querySelector('input[type="password"]');
+            const currentUrl = window.location.href;
+
+            if (passwordField && (currentUrl.includes('login') || currentUrl.includes('auth') || currentUrl.includes('signin'))) {
+              return { failed: true, message: 'Still on login page - credentials may be incorrect' };
+            }
+
+            return { failed: false, message: '' };
+          });
+
+          if (loginFailed.failed) {
+            log('Login failed: ' + loginFailed.message);
+            return {
+              error: 'Login failed: ' + loginFailed.message + '. Please verify your credentials.',
+              features: [],
+              loginSuccess: false,
+              pagesAnalyzed: 0,
+              logs: logs
+            };
+          }
+
+          loginSuccess = true;
+          log('Login completed successfully');
+        } else {
+          log('Submit button not found, pressing Enter...');
+          await passwordInput.press('Enter');
+          await wait(3000);
+          log('Login submitted via Enter key');
+          loginSuccess = true;
+        }
+      } else {
+        log('Login form not found, credentials may not be needed or form structure is non-standard');
+      }
+    }
+
+    // Step 2: Analyze each URL with deduplication tracking
+    const elementTracker = new Map(); // fingerprint -> { feature, pages: [] }
+
+    for (let i = 0; i < urls.length; i++) {
+      const targetUrl = urls[i];
+      log('Analyzing page ' + (i + 1) + '/' + urls.length + ': ' + targetUrl);
+
+      try {
+        await page.goto(targetUrl, { waitUntil: 'networkidle0', timeout: 30000 });
+        await wait(2000);
+        log('Page loaded, extracting elements...');
+
+        // Extract elements with position detection and fingerprinting
+        const pageFeatures = await page.evaluate((pageUrl) => {
+          const features = [];
+
+          // Helper to detect if element is in global area
+          const isInGlobalArea = (element) => {
+            let current = element;
+            while (current && current !== document.body) {
+              const tagName = current.tagName?.toLowerCase() || '';
+              const role = current.getAttribute('role') || '';
+              const className = current.className || '';
+              const id = current.id || '';
+
+              if (tagName === 'header' || tagName === 'footer' || tagName === 'nav') return true;
+              if (role === 'banner' || role === 'navigation' || role === 'contentinfo') return true;
+              if (typeof className === 'string' && (className.includes('header') || className.includes('footer') ||
+                  className.includes('navbar') || className.includes('nav-') || className.includes('menu'))) return true;
+              if (typeof id === 'string' && (id.includes('header') || id.includes('footer') ||
+                  id.includes('nav') || id.includes('menu'))) return true;
+
+              current = current.parentElement;
+            }
+            return false;
+          };
+
+          // Helper to generate element fingerprint
+          const getElementFingerprint = (type, text, selector = '') => {
+            const normalized = text.toLowerCase().trim().replace(/\\s+/g, ' ');
+            return type + ':' + normalized + ':' + selector;
+          };
+
+          // Forms
+          const forms = document.querySelectorAll('form');
+          forms.forEach((form, index) => {
+            if (index >= 5) return;
+
+            const inputs = form.querySelectorAll('input, select, textarea');
+            if (inputs.length === 0) return;
+
+            const inputDetails = Array.from(inputs).map(el => ({
+              name: el.getAttribute('name') || el.getAttribute('id') || '',
+              type: el.getAttribute('type') || el.tagName.toLowerCase(),
+              placeholder: el.getAttribute('placeholder') || '',
+            }));
+
+            const fieldNames = inputDetails.map(i => i.name + ' ' + i.placeholder).join(' ').toLowerCase();
+
+            let formType = 'data-entry';
+            let formPurpose = 'Data Entry Form';
+
+            if (fieldNames.includes('email') && fieldNames.includes('password') && !fieldNames.includes('confirm')) {
+              formType = 'login';
+              formPurpose = 'Login Form';
+            } else if (fieldNames.includes('search') || fieldNames.includes('query')) {
+              formType = 'search';
+              formPurpose = 'Search Form';
+            } else if (fieldNames.includes('card') || fieldNames.includes('payment')) {
+              formType = 'payment';
+              formPurpose = 'Payment Form';
+            } else if (fieldNames.includes('register') || fieldNames.includes('signup')) {
+              formType = 'registration';
+              formPurpose = 'Registration Form';
+            }
+
+            const isGlobal = isInGlobalArea(form);
+            const fingerprint = getElementFingerprint('form', formPurpose, formType);
+
+            features.push({
+              type: 'form',
+              formType,
+              purpose: formPurpose,
+              inputs: inputDetails,
+              pageUrl,
+              isGlobal,
+              fingerprint
+            });
+          });
+
+          // Buttons
+          const buttons = document.querySelectorAll('button, input[type="button"], input[type="submit"]');
+          buttons.forEach((button, index) => {
+            if (index >= 15) return;
+
+            const text = button.textContent?.trim() || button.getAttribute('value') || '';
+            const ariaLabel = button.getAttribute('aria-label') || '';
+            const displayText = text || ariaLabel;
+
+            if (displayText.length > 0 && displayText.length < 50) {
+              const isGlobal = isInGlobalArea(button);
+              const fingerprint = getElementFingerprint('button', displayText);
+
+              features.push({
+                type: 'button',
+                text: displayText,
+                pageUrl,
+                isGlobal,
+                fingerprint
+              });
+            }
+          });
+
+          // Links
+          const links = document.querySelectorAll('a[href]');
+          links.forEach((link, index) => {
+            if (index >= 15) return;
+
+            const href = link.getAttribute('href');
+            const text = link.textContent?.trim() || '';
+
+            if (href && !href.startsWith('#') && !href.startsWith('javascript:') && text.length > 0 && text.length < 50) {
+              const isGlobal = isInGlobalArea(link);
+              const fingerprint = getElementFingerprint('link', text, href);
+
+              features.push({
+                type: 'link',
+                text,
+                href,
+                pageUrl,
+                isGlobal,
+                fingerprint
+              });
+            }
+          });
+
+          return features;
+        }, targetUrl);
+
+        log('Found ' + pageFeatures.length + ' features on ' + targetUrl);
+
+        // Track elements globally to detect duplicates
+        pageFeatures.forEach(feature => {
+          if (!feature.fingerprint) return;
+
+          if (!elementTracker.has(feature.fingerprint)) {
+            elementTracker.set(feature.fingerprint, {
+              feature: feature,
+              pages: [feature.pageUrl]
+            });
+          } else {
+            const existing = elementTracker.get(feature.fingerprint);
+            if (!existing.pages.includes(feature.pageUrl)) {
+              existing.pages.push(feature.pageUrl);
+            }
+          }
+        });
+
+      } catch (error) {
+        log('Error analyzing ' + targetUrl + ': ' + error.message);
+      }
+    }
+
+    // Convert tracked elements to features array with dedup info
+    elementTracker.forEach((data) => {
+      const feature = data.feature;
+      feature.appearsOnPages = data.pages;
+      feature.isGlobal = feature.isGlobal || data.pages.length > 1;
+      features.push(feature);
+    });
+
+    log('Total unique features found: ' + features.length + ' (after deduplication)');
+
+    return {
+      features,
+      loginSuccess,
+      pagesAnalyzed: urls.length,
+      logs: logs
+    };
+
+  } catch (error) {
+    log('Script error: ' + error.message);
+    return {
+      error: error.message,
+      features: [],
+      loginSuccess: false,
+      logs: logs
+    };
+  }
+};
+`;
+}
+
+function generateTestCasesFromFeatures(features) {
+  const tests = [];
+
+  console.log(`Generating tests from ${features.length} deduplicated features`);
+
+  features.forEach(feature => {
+    const pages = feature.appearsOnPages || [feature.pageUrl];
+    const isGlobal = feature.isGlobal || pages.length > 1;
+
+    if (feature.type === 'form') {
+      const testCase = {
+        title: `Test ${feature.purpose}`,
+        preconditions: isGlobal
+          ? `User is authenticated on the website`
+          : `User is authenticated and on ${new URL(feature.pageUrl).pathname}`,
+        steps: isGlobal
+          ? [
+              `Navigate to any page with the form (e.g., ${pages[0]})`,
+              `Locate the ${feature.purpose.toLowerCase()}`,
+              ...feature.inputs.slice(0, 5).map(input =>
+                `Fill in "${input.name || input.type}" field with valid test data`
+              ),
+              'Submit the form'
+            ]
+          : [
+              `Navigate to ${feature.pageUrl}`,
+              `Locate the ${feature.purpose.toLowerCase()}`,
+              ...feature.inputs.slice(0, 5).map(input =>
+                `Fill in "${input.name || input.type}" field with valid test data`
+              ),
+              'Submit the form'
+            ],
+        expectedResults: `Form should be submitted successfully and appropriate feedback should be displayed`,
+        priority: feature.formType === 'login' || feature.formType === 'registration' ? 'High' : 'Medium',
+        category: feature.formType === 'login' ? 'Authentication' :
+                  feature.formType === 'registration' ? 'User Management' :
+                  feature.formType === 'search' ? 'Search' : 'Forms',
+        scope: isGlobal ? 'Global' : 'Page-specific',
+        affectedPages: pages
+      };
+      tests.push(testCase);
+
+    } else if (feature.type === 'button') {
+      if (tests.length >= 30) return;
+
+      tests.push({
+        title: `Test "${feature.text}" button functionality`,
+        preconditions: isGlobal
+          ? `User is authenticated on the website`
+          : `User is authenticated and on ${new URL(feature.pageUrl).pathname}`,
+        steps: isGlobal
+          ? [
+              `Navigate to any page with the button (e.g., ${pages[0]})`,
+              `Locate the "${feature.text}" button`,
+              'Click the button',
+              'Verify the action completes'
+            ]
+          : [
+              `Navigate to ${feature.pageUrl}`,
+              `Locate the "${feature.text}" button`,
+              'Click the button',
+              'Verify the action completes'
+            ],
+        expectedResults: 'Button should trigger appropriate action and provide user feedback',
+        priority: 'Medium',
+        category: 'User Interaction',
+        scope: isGlobal ? 'Global' : 'Page-specific',
+        affectedPages: pages
+      });
+
+    } else if (feature.type === 'link') {
+      if (tests.length >= 40) return;
+
+      tests.push({
+        title: `Test "${feature.text}" navigation`,
+        preconditions: isGlobal
+          ? `User is authenticated on the website`
+          : `User is authenticated and on ${new URL(feature.pageUrl).pathname}`,
+        steps: isGlobal
+          ? [
+              `Navigate to any page with the link (e.g., ${pages[0]})`,
+              `Click on "${feature.text}" link`,
+              'Verify navigation completes'
+            ]
+          : [
+              `Navigate to ${feature.pageUrl}`,
+              `Click on "${feature.text}" link`,
+              'Verify navigation completes'
+            ],
+        expectedResults: `Should navigate to the correct destination`,
+        priority: 'Low',
+        category: 'Navigation',
+        scope: isGlobal ? 'Global' : 'Page-specific',
+        affectedPages: pages
+      });
+    }
+  });
+
+  return tests.slice(0, 50);
+}
 
 app.post('/analyze', async (req, res) => {
+  req.setTimeout(120000);
+
   try {
     console.log('=== RECEIVED REQUEST ===');
     console.log('Request body:', JSON.stringify(req.body, null, 2));
 
-    const { url, urls, loginConfig } = req.body;
-    const targetUrls = urls || [url];
+    const { url, urls = [], pages = [], loginConfig } = req.body;
+    console.log('Extracted - url:', url, 'urls:', urls, 'pages:', pages);
 
-    console.log('Target URLs:', targetUrls);
+    if (!url && (!urls || urls.length === 0) && (!pages || pages.length === 0)) {
+      return res.status(400).json({
+        success: false,
+        message: 'URL or URLs array is required'
+      });
+    }
 
     if (!BROWSERLESS_TOKEN) {
       return res.status(500).json({
@@ -39,270 +559,98 @@ app.post('/analyze', async (req, res) => {
       });
     }
 
-    // Use Browserless /content API - much simpler!
-    const allFeatures = [];
+    // Support both 'urls' and 'pages' parameter names
+    const additionalUrls = pages.length > 0 ? pages : urls;
+    const targetUrls = additionalUrls && additionalUrls.length > 0 ? [url, ...additionalUrls] : [url];
+    console.log(`=== ANALYZING ${targetUrls.length} PAGE(S) WITH DEDUPLICATION ===`);
+    console.log('Target URLs:', targetUrls);
 
-    for (let i = 0; i < targetUrls.length; i++) {
-      const targetUrl = targetUrls[i];
-      console.log(`Fetching page ${i + 1}/${targetUrls.length}: ${targetUrl}`);
-
-      const response = await fetch(`https://production-sfo.browserless.io/content?token=${BROWSERLESS_TOKEN}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          url: targetUrl,
-          gotoOptions: {
-            waitUntil: 'networkidle0',
-            timeout: 30000
-          }
-        })
-      });
-
-      if (!response.ok) {
-        console.error(`Failed to fetch ${targetUrl}:`, response.statusText);
-        continue;
-      }
-
-      const html = await response.text();
-      console.log(`✓ Fetched ${html.length} bytes from ${targetUrl}`);
-
-      // Parse HTML and extract features
-      const features = extractFeaturesFromHTML(html, targetUrl);
-      console.log(`Found ${features.length} features on page ${i + 1}`);
-
-      allFeatures.push(...features);
+    if (loginConfig) {
+      console.log(`Login config provided for: ${loginConfig.loginUrl}`);
+      console.log(`Login config details:`, JSON.stringify({
+        hasUsername: !!(loginConfig.username || loginConfig.testUsername),
+        hasPassword: !!(loginConfig.password || loginConfig.testPassword),
+        loginUrl: loginConfig.loginUrl
+      }));
     }
 
-    // Deduplicate features
-    const uniqueFeatures = deduplicateFeatures(allFeatures);
-    console.log(`Total unique features: ${uniqueFeatures.length} (from ${allFeatures.length} total)`);
+    const cdpUrl = getCDPWebSocketUrl();
+    const script = getAnalysisScript();
 
-    // Generate test cases
-    const tests = generateTestCases(uniqueFeatures);
-    console.log(`✓ Generated ${tests.length} test cases`);
+    const response = await fetch('https://production-sfo.browserless.io/function', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Cache-Control': 'no-cache'
+      },
+      body: JSON.stringify({
+        code: script,
+        context: {
+          url: targetUrls[0],
+          urls: targetUrls,
+          loginConfig
+        },
+        token: BROWSERLESS_TOKEN
+      })
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error('Browserless error:', errorText);
+      return res.status(500).json({
+        success: false,
+        message: `Analysis failed: ${response.statusText}`
+      });
+    }
+
+    const result = await response.json();
+    console.log('✓ Script executed successfully');
+    console.log('Result:', JSON.stringify(result, null, 2));
+
+    if (result.error) {
+      return res.status(400).json({
+        success: false,
+        message: result.error,
+        logs: result.logs
+      });
+    }
+
+    console.log('✓ Generated ' + result.features.length + ' unique features (deduplicated)');
+    const tests = generateTestCasesFromFeatures(result.features);
+    console.log('✓ Generated ' + tests.length + ' test cases');
 
     res.json({
       success: true,
-      tests,
-      pagesAnalyzed: targetUrls.length,
-      loginSuccess: false, // Login not implemented yet in this version
-      stats: {
-        totalFeatures: allFeatures.length,
-        uniqueFeatures: uniqueFeatures.length,
-        tests: tests.length
+      tests: tests,
+      pagesAnalyzed: result.pagesAnalyzed,
+      loginSuccess: result.loginSuccess,
+      logs: result.logs,
+      deduplicationStats: {
+        uniqueFeatures: result.features.length,
+        globalElements: result.features.filter(f => f.isGlobal).length,
+        pageSpecificElements: result.features.filter(f => !f.isGlobal).length
       }
     });
 
   } catch (error) {
-    console.error('Analysis error:', error);
+    console.error('Error:', error);
     res.status(500).json({
       success: false,
-      message: error.message
+      message: error.message || 'Analysis failed'
     });
   }
 });
 
-function extractFeaturesFromHTML(html, url) {
-  const features = [];
+const server = app.listen(PORT, () => {
+  console.log(`Playwright Test Generator (Deduplicated) running on port ${PORT}`);
+  console.log(`Browserless token configured: ${!!BROWSERLESS_TOKEN ? 'Yes' : 'No'}`);
+  console.log('Features: Login automation, JavaScript execution, multi-page analysis, smart deduplication');
+});
 
-  // Simple regex-based extraction (no JSDOM needed)
-
-  // Extract links
-  const linkRegex = /<a[^>]+href=["']([^"']+)["'][^>]*>([^<]*)<\/a>/gi;
-  let match;
-  while ((match = linkRegex.exec(html)) !== null) {
-    const href = match[1];
-    const text = match[2].trim();
-    if (text && !href.startsWith('javascript:') && !href.startsWith('#')) {
-      features.push({
-        type: 'link',
-        text: text.substring(0, 100),
-        selector: `a[href="${href}"]`,
-        url,
-        fingerprint: `link:${text}:${href}`
-      });
-    }
-  }
-
-  // Extract buttons
-  const buttonRegex = /<button[^>]*>([^<]+)<\/button>/gi;
-  while ((match = buttonRegex.exec(html)) !== null) {
-    const text = match[1].trim();
-    if (text) {
-      features.push({
-        type: 'button',
-        text: text.substring(0, 100),
-        selector: `button:contains("${text}")`,
-        url,
-        fingerprint: `button:${text}`
-      });
-    }
-  }
-
-  // Extract clickable divs with tabindex (act as buttons/links)
-  const clickableDivRegex = /<div[^>]*tabindex=["']\d+["'][^>]*>([\s\S]*?)<\/div>/gi;
-  while ((match = clickableDivRegex.exec(html)) !== null) {
-    const fullTag = match[0];
-    const content = match[1];
-
-    // Extract class for selector
-    const classMatch = fullTag.match(/class=["']([^"']+)["']/);
-    const classes = classMatch ? classMatch[1] : '';
-
-    // Extract text content (strip inner HTML tags)
-    const textMatch = content.match(/>([^<]+)</g);
-    const texts = textMatch ? textMatch.map(t => t.replace(/>/g, '').replace(/</g, '').trim()).filter(t => t) : [];
-    const text = texts.join(' ').substring(0, 100) || 'Clickable element';
-
-    if (text && text.length > 2) {
-      // Create a unique selector based on classes or tabindex
-      const firstClass = classes.split(' ')[0] || '';
-      const selector = firstClass ? `div.${firstClass}[tabindex]` : 'div[tabindex="0"]';
-
-      features.push({
-        type: 'clickable',
-        text: text.trim(),
-        selector: selector,
-        url,
-        fingerprint: `clickable:${text.trim()}:${classes}`
-      });
-    }
-  }
-
-  // Extract elements with role="button" or role="link"
-  const roleButtonRegex = /<(\w+)[^>]*role=["'](button|link)["'][^>]*>([\s\S]*?)<\/\1>/gi;
-  while ((match = roleButtonRegex.exec(html)) !== null) {
-    const tagName = match[1];
-    const role = match[2];
-    const content = match[3];
-    const fullTag = match[0];
-
-    // Extract text content
-    const textMatch = content.match(/>([^<]+)</g);
-    const texts = textMatch ? textMatch.map(t => t.replace(/>/g, '').replace(/</g, '').trim()).filter(t => t) : [];
-    const text = texts.join(' ').substring(0, 100) || `${role} element`;
-
-    if (text && text.length > 2) {
-      const classMatch = fullTag.match(/class=["']([^"']+)["']/);
-      const firstClass = classMatch ? classMatch[1].split(' ')[0] : '';
-      const selector = firstClass ? `${tagName}.${firstClass}[role="${role}"]` : `${tagName}[role="${role}"]`;
-
-      features.push({
-        type: role,
-        text: text.trim(),
-        selector: selector,
-        url,
-        fingerprint: `${role}:${text.trim()}`
-      });
-    }
-  }
-
-  // Extract inputs
-  const inputRegex = /<input[^>]+type=["']([^"']+)["'][^>]*>/gi;
-  while ((match = inputRegex.exec(html)) !== null) {
-    const type = match[1];
-    const nameMatch = match[0].match(/name=["']([^"']+)["']/);
-    const name = nameMatch ? nameMatch[1] : 'unnamed';
-    features.push({
-      type: 'input',
-      text: `Input ${type}: ${name}`,
-      selector: `input[name="${name}"]`,
-      url,
-      fingerprint: `input:${type}:${name}`
-    });
-  }
-
-  // Extract textareas
-  const textareaRegex = /<textarea[^>]*name=["']([^"']+)["'][^>]*>/gi;
-  while ((match = textareaRegex.exec(html)) !== null) {
-    const name = match[1];
-    features.push({
-      type: 'input',
-      text: `Textarea: ${name}`,
-      selector: `textarea[name="${name}"]`,
-      url,
-      fingerprint: `textarea:${name}`
-    });
-  }
-
-  // Extract select dropdowns
-  const selectRegex = /<select[^>]*name=["']([^"']+)["'][^>]*>/gi;
-  while ((match = selectRegex.exec(html)) !== null) {
-    const name = match[1];
-    features.push({
-      type: 'select',
-      text: `Dropdown: ${name}`,
-      selector: `select[name="${name}"]`,
-      url,
-      fingerprint: `select:${name}`
-    });
-  }
-
-  return features;
-}
-
-function deduplicateFeatures(features) {
-  const seen = new Set();
-  const unique = [];
-
-  for (const feature of features) {
-    if (!seen.has(feature.fingerprint)) {
-      seen.add(feature.fingerprint);
-      unique.push(feature);
-    }
-  }
-
-  return unique;
-}
-
-function generateTestCases(features) {
-  return features.map((feature, index) => {
-    let action, expected, category;
-
-    switch (feature.type) {
-      case 'link':
-      case 'button':
-      case 'clickable':
-        action = 'click';
-        expected = 'Element is clickable and responds';
-        category = 'functional';
-        break;
-      case 'input':
-        action = 'fill';
-        expected = 'Input accepts text';
-        category = 'functional';
-        break;
-      case 'select':
-        action = 'select';
-        expected = 'Dropdown allows selection';
-        category = 'functional';
-        break;
-      default:
-        action = 'interact';
-        expected = 'Element is interactive';
-        category = 'functional';
-    }
-
-    return {
-      id: `test_${index + 1}`,
-      category: category,
-      title: `Test ${feature.type}: ${feature.text}`,
-      description: `Verify that ${feature.type} "${feature.text}" is functional`,
-      priority: 'medium',
-      type: feature.type,
-      selector: feature.selector,
-      action: action,
-      expected: expected,
-      preconditions: '',
-      steps: [{
-        step: 1,
-        action: `${action.charAt(0).toUpperCase() + action.slice(1)} on element`,
-        selector: feature.selector,
-        data: feature.text
-      }],
-      expectedResults: expected,
-      scope: 'Page-specific',
-      affectedPages: [feature.url]
-    };
+process.on('SIGTERM', () => {
+  console.log('SIGTERM received, closing server...');
+  server.close(() => {
+    console.log('Server closed');
+    process.exit(0);
   });
-}
+});
