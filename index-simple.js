@@ -139,64 +139,6 @@ function extractFeaturesFromHTML(html, url) {
     }
   }
 
-  // Extract clickable divs with tabindex (act as buttons/links)
-  const clickableDivRegex = /<div[^>]*tabindex=["']\d+["'][^>]*>([\s\S]*?)<\/div>/gi;
-  while ((match = clickableDivRegex.exec(html)) !== null) {
-    const fullTag = match[0];
-    const content = match[1];
-
-    // Extract class for selector
-    const classMatch = fullTag.match(/class=["']([^"']+)["']/);
-    const classes = classMatch ? classMatch[1] : '';
-
-    // Extract text content (strip inner HTML tags)
-    const textMatch = content.match(/>([^<]+)</g);
-    const texts = textMatch ? textMatch.map(t => t.replace(/>/g, '').replace(/</g, '').trim()).filter(t => t) : [];
-    const text = texts.join(' ').substring(0, 100) || 'Clickable element';
-
-    if (text && text.length > 2) {
-      // Create a unique selector based on classes or tabindex
-      const firstClass = classes.split(' ')[0] || '';
-      const selector = firstClass ? `div.${firstClass}[tabindex]` : 'div[tabindex="0"]';
-
-      features.push({
-        type: 'clickable',
-        text: text.trim(),
-        selector: selector,
-        url,
-        fingerprint: `clickable:${text.trim()}:${classes}`
-      });
-    }
-  }
-
-  // Extract elements with role="button" or role="link"
-  const roleButtonRegex = /<(\w+)[^>]*role=["'](button|link)["'][^>]*>([\s\S]*?)<\/\1>/gi;
-  while ((match = roleButtonRegex.exec(html)) !== null) {
-    const tagName = match[1];
-    const role = match[2];
-    const content = match[3];
-    const fullTag = match[0];
-
-    // Extract text content
-    const textMatch = content.match(/>([^<]+)</g);
-    const texts = textMatch ? textMatch.map(t => t.replace(/>/g, '').replace(/</g, '').trim()).filter(t => t) : [];
-    const text = texts.join(' ').substring(0, 100) || `${role} element`;
-
-    if (text && text.length > 2) {
-      const classMatch = fullTag.match(/class=["']([^"']+)["']/);
-      const firstClass = classMatch ? classMatch[1].split(' ')[0] : '';
-      const selector = firstClass ? `${tagName}.${firstClass}[role="${role}"]` : `${tagName}[role="${role}"]`;
-
-      features.push({
-        type: role,
-        text: text.trim(),
-        selector: selector,
-        url,
-        fingerprint: `${role}:${text.trim()}`
-      });
-    }
-  }
-
   // Extract inputs
   const inputRegex = /<input[^>]+type=["']([^"']+)["'][^>]*>/gi;
   while ((match = inputRegex.exec(html)) !== null) {
@@ -209,32 +151,6 @@ function extractFeaturesFromHTML(html, url) {
       selector: `input[name="${name}"]`,
       url,
       fingerprint: `input:${type}:${name}`
-    });
-  }
-
-  // Extract textareas
-  const textareaRegex = /<textarea[^>]*name=["']([^"']+)["'][^>]*>/gi;
-  while ((match = textareaRegex.exec(html)) !== null) {
-    const name = match[1];
-    features.push({
-      type: 'input',
-      text: `Textarea: ${name}`,
-      selector: `textarea[name="${name}"]`,
-      url,
-      fingerprint: `textarea:${name}`
-    });
-  }
-
-  // Extract select dropdowns
-  const selectRegex = /<select[^>]*name=["']([^"']+)["'][^>]*>/gi;
-  while ((match = selectRegex.exec(html)) !== null) {
-    const name = match[1];
-    features.push({
-      type: 'select',
-      text: `Dropdown: ${name}`,
-      selector: `select[name="${name}"]`,
-      url,
-      fingerprint: `select:${name}`
     });
   }
 
@@ -256,40 +172,16 @@ function deduplicateFeatures(features) {
 }
 
 function generateTestCases(features) {
-  return features.map((feature, index) => {
-    let action, expected;
-
-    switch (feature.type) {
-      case 'link':
-      case 'button':
-      case 'clickable':
-        action = 'click';
-        expected = 'Element is clickable and responds';
-        break;
-      case 'input':
-        action = 'fill';
-        expected = 'Input accepts text';
-        break;
-      case 'select':
-        action = 'select';
-        expected = 'Dropdown allows selection';
-        break;
-      default:
-        action = 'interact';
-        expected = 'Element is interactive';
-    }
-
-    return {
-      id: `test_${index + 1}`,
-      title: `Test ${feature.type}: ${feature.text}`,
-      description: `Verify that ${feature.type} "${feature.text}" is functional`,
-      priority: 'medium',
-      type: feature.type,
-      selector: feature.selector,
-      action: action,
-      expected: expected,
-      scope: 'Page-specific',
-      affectedPages: [feature.url]
-    };
-  });
+  return features.map((feature, index) => ({
+    id: `test_${index + 1}`,
+    title: `Test ${feature.type}: ${feature.text}`,
+    description: `Verify that ${feature.type} "${feature.text}" is functional`,
+    priority: 'medium',
+    type: feature.type,
+    selector: feature.selector,
+    action: feature.type === 'link' ? 'click' : feature.type === 'button' ? 'click' : 'fill',
+    expected: feature.type === 'link' ? 'Navigation occurs' : 'Element responds',
+    scope: 'Page-specific',
+    affectedPages: [feature.url]
+  }));
 }
