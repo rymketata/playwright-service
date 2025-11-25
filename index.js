@@ -561,7 +561,18 @@ app.post('/analyze', async (req, res) => {
 
     // Support both 'urls' and 'pages' parameter names
     const additionalUrls = pages.length > 0 ? pages : urls;
-    const targetUrls = additionalUrls && additionalUrls.length > 0 ? [url, ...additionalUrls] : [url];
+    let targetUrls;
+
+    if (additionalUrls && additionalUrls.length > 0) {
+      // If additional URLs are provided and url is defined, include it first
+      targetUrls = url ? [url, ...additionalUrls] : additionalUrls;
+    } else {
+      // Only main URL provided
+      targetUrls = [url];
+    }
+
+    // Filter out any undefined values
+    targetUrls = targetUrls.filter(u => u && u.trim());
     console.log(`=== ANALYZING ${targetUrls.length} PAGE(S) WITH DEDUPLICATION ===`);
     console.log('Target URLs:', targetUrls);
 
@@ -597,6 +608,14 @@ app.post('/analyze', async (req, res) => {
     if (!response.ok) {
       const errorText = await response.text();
       console.error('Browserless error:', errorText);
+
+      if (response.status === 401) {
+        return res.status(500).json({
+          success: false,
+          message: 'Browserless authentication failed. Please verify your BROWSERLESS_TOKEN is configured correctly in the service environment variables.'
+        });
+      }
+
       return res.status(500).json({
         success: false,
         message: `Analysis failed: ${response.statusText}`
