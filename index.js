@@ -257,7 +257,7 @@ function deduplicateFeatures(features) {
 
 function generateTestCases(features) {
   return features.map((feature, index) => {
-    let action, expected;
+    let action, expected, category;
 
     switch (feature.type) {
       case 'link':
@@ -265,22 +265,27 @@ function generateTestCases(features) {
       case 'clickable':
         action = 'click';
         expected = 'Element is clickable and responds';
+        category = 'functional';
         break;
       case 'input':
         action = 'fill';
         expected = 'Input accepts text';
+        category = 'functional';
         break;
       case 'select':
         action = 'select';
         expected = 'Dropdown allows selection';
+        category = 'functional';
         break;
       default:
         action = 'interact';
         expected = 'Element is interactive';
+        category = 'functional';
     }
 
     return {
       id: `test_${index + 1}`,
+      category: category,
       title: `Test ${feature.type}: ${feature.text}`,
       description: `Verify that ${feature.type} "${feature.text}" is functional`,
       priority: 'medium',
@@ -288,6 +293,14 @@ function generateTestCases(features) {
       selector: feature.selector,
       action: action,
       expected: expected,
+      preconditions: '',
+      steps: [{
+        step: 1,
+        action: `${action.charAt(0).toUpperCase() + action.slice(1)} on element`,
+        selector: feature.selector,
+        data: feature.text
+      }],
+      expectedResults: expected,
       scope: 'Page-specific',
       affectedPages: [feature.url]
     };
