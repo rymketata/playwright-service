@@ -190,6 +190,9 @@ export default async ({ page }) => {
   const features = [];
   let loginSuccess = false;
 
+  // Helper function for waiting
+  const wait = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
   try {
     // Step 1: Handle login if credentials provided
     const username = loginConfig?.username || loginConfig?.testUsername;
@@ -197,8 +200,8 @@ export default async ({ page }) => {
 
     if (loginConfig && loginConfig.loginUrl && username && password) {
       console.log('Navigating to login page:', loginConfig.loginUrl);
-      await page.goto(loginConfig.loginUrl, { waitUntil: 'networkidle0', timeout: 30000 });
-      await page.waitForTimeout(2000);
+      await page.goto(loginConfig.loginUrl, { waitUntil: 'networkidle', timeout: 30000 });
+      await wait(2000);
 
       // Try to find and fill login form
       const usernameSelectors = [
@@ -267,17 +270,17 @@ export default async ({ page }) => {
         if (submitButton) {
           console.log('Clicking login button...');
           await Promise.all([
-            page.waitForNavigation({ waitUntil: 'networkidle0', timeout: 15000 }).catch(() => {}),
+            page.waitForNavigation({ waitUntil: 'networkidle', timeout: 15000 }).catch(() => {}),
             submitButton.click()
           ]);
 
-          await page.waitForTimeout(3000);
+          await wait(3000);
           loginSuccess = true;
           console.log('Login completed');
         } else {
           console.log('Submit button not found, pressing Enter...');
           await passwordInput.press('Enter');
-          await page.waitForTimeout(3000);
+          await wait(3000);
           loginSuccess = true;
         }
       } else {
@@ -292,8 +295,8 @@ export default async ({ page }) => {
       console.log(\`Analyzing page \${i + 1}/\${urls.length}: \${targetUrl}\`);
 
       try {
-        await page.goto(targetUrl, { waitUntil: 'networkidle0', timeout: 30000 });
-        await page.waitForTimeout(2000);
+        await page.goto(targetUrl, { waitUntil: 'networkidle', timeout: 30000 });
+        await wait(2000);
 
         // Extract elements after JavaScript execution
         const pageFeatures = await page.evaluate((pageUrl) => {
