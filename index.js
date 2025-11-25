@@ -203,21 +203,63 @@ export default async ({ page }) => {
       await page.goto(loginConfig.loginUrl, { waitUntil: 'load', timeout: 30000 });
       await wait(2000);
 
-      // Try to find and fill login form
+      // Try to find and fill login form - comprehensive selectors for both French and English
       const usernameSelectors = [
+        // By attribute name (most reliable)
         'input[name="username"]',
         'input[name="email"]',
+        'input[name="login"]',
+        'input[name="user"]',
+        'input[name="identifier"]',
+        // By type
         'input[type="email"]',
-        'input[placeholder*="username" i]',
+        // By placeholder - English
         'input[placeholder*="email" i]',
+        'input[placeholder*="username" i]',
+        'input[placeholder*="user name" i]',
+        'input[placeholder*="login" i]',
+        // By placeholder - French
+        'input[placeholder*="mail" i]',
+        'input[placeholder*="utilisateur" i]',
+        'input[placeholder*="identifiant" i]',
+        'input[placeholder*="nom" i]',
+        // By ID
         'input[id*="username" i]',
-        'input[id*="email" i]'
+        'input[id*="email" i]',
+        'input[id*="login" i]',
+        'input[id*="user" i]',
+        // By class
+        'input[class*="email" i]',
+        'input[class*="username" i]',
+        'input[class*="login" i]',
+        // Fallback - first text or email input in form
+        'form input[type="email"]',
+        'form input[type="text"]:first-of-type'
       ];
 
       const passwordSelectors = [
+        // By attribute name
         'input[name="password"]',
+        'input[name="passwd"]',
+        'input[name="pwd"]',
+        'input[name="pass"]',
+        // By type (most reliable for password)
         'input[type="password"]',
-        'input[id*="password" i]'
+        // By placeholder - English
+        'input[placeholder*="password" i]',
+        'input[placeholder*="pass" i]',
+        // By placeholder - French
+        'input[placeholder*="mot de passe" i]',
+        'input[placeholder*="motdepasse" i]',
+        // By ID
+        'input[id*="password" i]',
+        'input[id*="passwd" i]',
+        'input[id*="pass" i]',
+        // By class
+        'input[class*="password" i]',
+        'input[class*="passwd" i]',
+        // Fallback
+        'form input[type="password"]'
       ];
 
       let usernameInput = null;
