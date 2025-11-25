@@ -200,7 +200,7 @@ export default async ({ page }) => {
 
     if (loginConfig && loginConfig.loginUrl && username && password) {
       console.log('Navigating to login page:', loginConfig.loginUrl);
-      await page.goto(loginConfig.loginUrl, { waitUntil: 'networkidle', timeout: 30000 });
+      await page.goto(loginConfig.loginUrl, { waitUntil: 'load', timeout: 30000 });
       await wait(2000);
 
       // Try to find and fill login form
@@ -270,7 +270,7 @@ export default async ({ page }) => {
         if (submitButton) {
           console.log('Clicking login button...');
           await Promise.all([
-            page.waitForNavigation({ waitUntil: 'networkidle', timeout: 15000 }).catch(() => {}),
+            page.waitForNavigation({ waitUntil: 'load', timeout: 15000 }).catch(() => {}),
             submitButton.click()
           ]);
 
@@ -295,7 +295,7 @@ export default async ({ page }) => {
       console.log(\`Analyzing page \${i + 1}/\${urls.length}: \${targetUrl}\`);
 
       try {
-        await page.goto(targetUrl, { waitUntil: 'networkidle', timeout: 30000 });
+        await page.goto(targetUrl, { waitUntil: 'load', timeout: 30000 });
         await wait(2000);
 
         // Extract elements after JavaScript execution
