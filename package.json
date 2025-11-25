@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "description": "Playwright service for automated test generation",
   "main": "index.js",
-  "type": "module",
+  
   "scripts": {
     "start": "node index.js",
     "dev": "node index.js"
