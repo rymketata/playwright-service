@@ -337,11 +337,31 @@ export default async ({ page }) => {
       console.log(\`Analyzing page \${i + 1}/\${urls.length}: \${targetUrl}\`);
 
       try {
-        await page.goto(targetUrl, { waitUntil: 'load', timeout: 30000 });
-        await wait(2000);
+        // Navigate and wait for networkidle (better for SPAs)
+        await page.goto(targetUrl, { waitUntil: 'networkidle', timeout: 30000 });
+        console.log('Page loaded, waiting for dynamic content...');
 
-        // Extract elements after JavaScript execution
-        const pageFeatures = await page.evaluate((pageUrl) => {
+        // Wait for common framework indicators
+        await Promise.race([
+          page.waitForSelector('button, [role="button"], a, input, form', { timeout: 5000 }),
+          wait(5000)
+        ]).catch(() => {});
+
+        // Additional wait for animations and transitions
+        await wait(3000);
+
+        console.log('Starting element extraction...');
+
+        // Extract elements after JavaScript execution - with retry logic
+        let pageFeatures = [];
+        let attempts = 0;
+        const maxAttempts = 3;
+
+        while (attempts < maxAttempts && pageFeatures.length === 0) {
+          attempts++;
+          console.log(\`Extraction attempt \${attempts}/\${maxAttempts}\`);
+
+          pageFeatures = await page.evaluate((pageUrl) => {
           const features = [];
 
           // Forms
@@ -386,16 +406,28 @@ export default async ({ page }) => {
             });
           });
 
-          // Buttons
-          const buttons = document.querySelectorAll('button, input[type="button"], input[type="submit"]');
+          // Buttons and clickable elements - COMPREHENSIVE detection
+          const buttons = document.querySelectorAll(
+            'button, input[type="button"], input[type="submit"], ' +
+            '[role="button"], [onclick], ' +
+            'div[class*="button" i], div[class*="btn" i], ' +
+            'span[class*="button" i], span[class*="btn" i], ' +
+            'a[class*="button" i], a[class*="btn" i], ' +
+            '[class*="clickable" i], [class*="action" i]'
+          );
+
+          const seenButtons = new Set();
           buttons.forEach((button, index) => {
-            if (index >= 15) return;
+            if (index >= 30) return;
 
-            const text = button.textContent?.trim() || button.getAttribute('value') || '';
+            // Get text from multiple sources
+            const text = button.textContent?.trim() || button.getAttribute('value') || button.getAttribute('title') || '';
             const ariaLabel = button.getAttribute('aria-label') || '';
-            const displayText = text || ariaLabel;
+            const displayText = (text || ariaLabel).trim();
 
-            if (displayText.length > 0 && displayText.length < 50) {
+            // Skip duplicates and invalid entries
+            if (displayText.length > 0 && displayText.length < 150 && !seenButtons.has(displayText)) {
+              seenButtons.add(displayText);
               features.push({
                 type: 'button',
                 text: displayText,
@@ -404,15 +436,18 @@ export default async ({ page }) => {
             }
           });
 
-          // Links
+          // Links - improved detection
           const links = document.querySelectorAll('a[href]');
+          const seenLinks = new Set();
           links.forEach((link, index) => {
-            if (index >= 15) return;
+            if (index >= 25) return;
 
             const href = link.getAttribute('href');
-            const text = link.textContent?.trim() || '';
+            const text = link.textContent?.trim() || link.getAttribute('title') || '';
 
-            if (href && !href.startsWith('#') && !href.startsWith('javascript:') && text.length > 0 && text.length < 50) {
+            if (href && !href.startsWith('#') && !href.startsWith('javascript:') &&
+                text.length > 0 && text.length < 100 && !seenLinks.has(text)) {
+              seenLinks.add(text);
               features.push({
                 type: 'link',
                 text,
@@ -423,9 +458,18 @@ export default async ({ page }) => {
           });
 
           return features;
-        }, targetUrl);
+          }, targetUrl);
 
-        console.log(\`Found \${pageFeatures.length} features on \${targetUrl}\`);
+          console.log(\`Attempt \${attempts}: Found \${pageFeatures.length} features\`);
+
+          // If no features found, wait and retry
+          if (pageFeatures.length === 0 && attempts < maxAttempts) {
+            console.log('No features found, waiting before retry...');
+            await wait(2000);
+          }
+        }
+
+        console.log(\`Total found \${pageFeatures.length} features on \${targetUrl}\`);
         features.push(...pageFeatures);
 
       } catch (error) {
