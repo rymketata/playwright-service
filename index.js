@@ -325,39 +325,64 @@ export default async ({ page }) => {
 
         // Verify login success by checking for error messages
         console.log('Verifying login...');
-        const loginFailed = await page.evaluate(() => {
-          // Check for error messages in common selectors
+        const currentUrl = page.url();
+
+        const loginFailed = await page.evaluate((loginUrl) => {
+          // STEP 1: Check for explicit error messages
           const errorSelectors = [
             'div[class*="error"]', 'span[class*="error"]', 'p[class*="error"]',
             'div[class*="alert"]', 'div[class*="danger"]', 'div[class*="invalid"]',
-            'div[role="alert"]', '[aria-invalid="true"]', 'div[class*="message"]'
+            'div[role="alert"]', '[aria-invalid="true"]', 'div[class*="message"]',
+            'span[class*="alert"]', 'p[class*="alert"]'
           ];
 
           for (const selector of errorSelectors) {
             const elements = document.querySelectorAll(selector);
             for (const el of elements) {
+              // Check if element is visible
+              const rect = el.getBoundingClientRect();
+              const isVisible = rect.width > 0 && rect.height > 0 &&
+                               window.getComputedStyle(el).display !== 'none' &&
+                               window.getComputedStyle(el).visibility !== 'hidden';
+
+              if (!isVisible) continue;
+
               const text = el.textContent?.toLowerCase() || '';
               // Check for error keywords in multiple languages
               if (text.includes('incorrect') || text.includes('invalid') || text.includes('wrong') ||
                   text.includes('failed') || text.includes('erreur') || text.includes('incorrecte') ||
                   text.includes('invalide') || text.includes('échoué') || text.includes('echec') ||
-                  text.includes('échec') || text.includes('mauvais')) {
+                  text.includes('échec') || text.includes('mauvais') || text.includes('denied')) {
                 return { failed: true, message: el.textContent?.trim() || 'Login failed' };
               }
             }
           }
 
-          // Check if still on login page (password field present)
-          const passwordField = document.querySelector('input[type="password"]');
-          const currentUrl = window.location.href;
+          // STEP 2: Check if URL changed (success indicator)
+          const currentPageUrl = window.location.href;
+          if (currentPageUrl !== loginUrl) {
+            console.log('URL changed from login page - likely success');
+            return { failed: false, message: 'URL changed - success' };
+          }
 
-          if (passwordField && (currentUrl.includes('login') || currentUrl.includes('auth') ||
-              currentUrl.includes('signin') || currentUrl.includes('connexion'))) {
-            return { failed: true, message: 'Still on login page - credentials may be incorrect' };
+          // STEP 3: Check if login form is VISIBLE (not just present in DOM)
+          const passwordField = document.querySelector('input[type="password"]');
+          if (passwordField) {
+            const rect = passwordField.getBoundingClientRect();
+            const isVisible = rect.width > 0 && rect.height > 0 &&
+                             window.getComputedStyle(passwordField).display !== 'none' &&
+                             window.getComputedStyle(passwordField).visibility !== 'hidden' &&
+                             window.getComputedStyle(passwordField).opacity !== '0';
+
+            // Only fail if password field is VISIBLE and we're still on login URL
+            if (isVisible && (currentPageUrl.includes('login') || currentPageUrl.includes('auth') ||
+                currentPageUrl.includes('signin') || currentPageUrl.includes('connexion'))) {
+              return { failed: true, message: 'Still on login page - credentials may be incorrect' };
+            }
           }
 
           return { failed: false, message: '' };
-        });
+        }, loginConfig.loginUrl);
 
         if (loginFailed.failed) {
           console.log('Login failed: ' + loginFailed.message);
