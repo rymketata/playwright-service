@@ -334,11 +334,16 @@ export default async ({ page }) => {
     // Step 2: Analyze each URL
     for (let i = 0; i < urls.length; i++) {
       const targetUrl = urls[i];
-      console.log(\`Analyzing page \${i + 1}/\${urls.length}: \${targetUrl}\`);
+      console.log('Analyzing page ' + (i + 1) + '/' + urls.length + ': ' + targetUrl);
 
       try {
-        // Navigate and wait for networkidle (better for SPAs)
-        await page.goto(targetUrl, { waitUntil: 'networkidle', timeout: 30000 });
+        // Navigate with multiple wait strategies (fallback if networkidle fails)
+        try {
+          await page.goto(targetUrl, { waitUntil: 'networkidle', timeout: 30000 });
+        } catch (e) {
+          console.log('networkidle failed, falling back to domcontentloaded...');
+          await page.goto(targetUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
+        }
         console.log('Page loaded, waiting for dynamic content...');
 
         // Wait for common framework indicators
@@ -359,7 +364,7 @@ export default async ({ page }) => {
 
         while (attempts < maxAttempts && pageFeatures.length === 0) {
           attempts++;
-          console.log(\`Extraction attempt \${attempts}/\${maxAttempts}\`);
+          console.log('Extraction attempt ' + attempts + '/' + maxAttempts);
 
           pageFeatures = await page.evaluate((pageUrl) => {
           const features = [];
@@ -378,7 +383,7 @@ export default async ({ page }) => {
               placeholder: el.getAttribute('placeholder') || '',
             }));
 
-            const fieldNames = inputDetails.map(i => \`\${i.name} \${i.placeholder}\`.toLowerCase()).join(' ');
+            const fieldNames = inputDetails.map(i => (i.name + ' ' + i.placeholder).toLowerCase()).join(' ');
 
             let formType = 'data-entry';
             let formPurpose = 'Data Entry Form';
@@ -457,10 +462,17 @@ export default async ({ page }) => {
             }
           });
 
+          // Debug: Count each type
+          const formCount = features.filter(f => f.type === 'form').length;
+          const buttonCount = features.filter(f => f.type === 'button').length;
+          const linkCount = features.filter(f => f.type === 'link').length;
+
+          console.log('Found - Forms: ' + formCount + ', Buttons: ' + buttonCount + ', Links: ' + linkCount);
+
           return features;
           }, targetUrl);
 
-          console.log(\`Attempt \${attempts}: Found \${pageFeatures.length} features\`);
+          console.log('Attempt ' + attempts + ': Found ' + pageFeatures.length + ' features');
 
           // If no features found, wait and retry
           if (pageFeatures.length === 0 && attempts < maxAttempts) {
@@ -469,15 +481,15 @@ export default async ({ page }) => {
           }
         }
 
-        console.log(\`Total found \${pageFeatures.length} features on \${targetUrl}\`);
+        console.log('Total found ' + pageFeatures.length + ' features on ' + targetUrl);
         features.push(...pageFeatures);
 
       } catch (error) {
-        console.error(\`Error analyzing \${targetUrl}:\`, error.message);
+        console.error('Error analyzing ' + targetUrl + ':', error.message);
       }
     }
 
-    console.log(\`Total features found: \${features.length}\`);
+    console.log('Total features found: ' + features.length);
 
     return {
       features,
