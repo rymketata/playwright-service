@@ -317,14 +317,60 @@ export default async ({ page }) => {
           ]);
 
           await wait(3000);
-          loginSuccess = true;
-          console.log('Login completed');
         } else {
           console.log('Submit button not found, pressing Enter...');
           await passwordInput.press('Enter');
           await wait(3000);
-          loginSuccess = true;
         }
+
+        // Verify login success by checking for error messages
+        console.log('Verifying login...');
+        const loginFailed = await page.evaluate(() => {
+          // Check for error messages in common selectors
+          const errorSelectors = [
+            'div[class*="error"]', 'span[class*="error"]', 'p[class*="error"]',
+            'div[class*="alert"]', 'div[class*="danger"]', 'div[class*="invalid"]',
+            'div[role="alert"]', '[aria-invalid="true"]', 'div[class*="message"]'
+          ];
+
+          for (const selector of errorSelectors) {
+            const elements = document.querySelectorAll(selector);
+            for (const el of elements) {
+              const text = el.textContent?.toLowerCase() || '';
+              // Check for error keywords in multiple languages
+              if (text.includes('incorrect') || text.includes('invalid') || text.includes('wrong') ||
+                  text.includes('failed') || text.includes('erreur') || text.includes('incorrecte') ||
+                  text.includes('invalide') || text.includes('échoué') || text.includes('echec') ||
+                  text.includes('échec') || text.includes('mauvais')) {
+                return { failed: true, message: el.textContent?.trim() || 'Login failed' };
+              }
+            }
+          }
+
+          // Check if still on login page (password field present)
+          const passwordField = document.querySelector('input[type="password"]');
+          const currentUrl = window.location.href;
+
+          if (passwordField && (currentUrl.includes('login') || currentUrl.includes('auth') ||
+              currentUrl.includes('signin') || currentUrl.includes('connexion'))) {
+            return { failed: true, message: 'Still on login page - credentials may be incorrect' };
+          }
+
+          return { failed: false, message: '' };
+        });
+
+        if (loginFailed.failed) {
+          console.log('Login failed: ' + loginFailed.message);
+          return {
+            error: 'Login failed: ' + loginFailed.message + '. Please verify your credentials.',
+            features: [],
+            loginSuccess: false,
+            pagesAnalyzed: 0
+          };
+        }
+
+        loginSuccess = true;
+        console.log('Login verified successfully');
       } else {
         console.log('Login form not found');
         return { error: 'Login form not found on the page', features: [], loginSuccess: false };
