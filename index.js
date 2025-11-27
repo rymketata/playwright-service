@@ -233,6 +233,33 @@ export default async ({ page }) => {
 
       page.on('response', async (response) => {
         const url = response.url();
+        if (url.includes('login_fetch.php')) {
+    try {
+      const text = await response.text();
+      
+      // Détection directe du texte "IncorrectLogin"
+      if (text.includes('IncorrectLogin')) {
+        loginFailed = true;
+        loginFailedReason = 'Identifiants incorrects (détecté via login_fetch.php)';
+        console.log('✓ Login failure detected in login_fetch.php response');
+      }
+      
+      // Si c'est du JSON, vérifier la structure
+      if (response.headers()['content-type']?.includes('application/json')) {
+        try {
+          const json = JSON.parse(text);
+          if (json === 'IncorrectLogin' || json.error === 'IncorrectLogin') {
+            loginFailed = true;
+            loginFailedReason = 'Identifiants incorrects';
+          }
+        } catch (e) {
+          // Pas du JSON, on ignore
+        }
+      }
+    } catch (e) {
+      // Erreur de lecture de la réponse
+    }
+  }
 
         // Common API endpoints that indicate authentication
         const authEndpoints = ['/collaborateurs', '/users', '/auth', '/login', '/session', '/api/user'];
@@ -293,7 +320,9 @@ export default async ({ page }) => {
       // Try to find and fill login form - comprehensive selectors for both French and English
       const usernameSelectors = [
         // By attribute name (most reliable)
-        'input[name="username"]',
+        'input[name="username"]','input[placeholder*="E-mail ou nom d\'utilisateur" i]',
+  'input[placeholder*="E-mail" i]', 
+  'input[placeholder*="utilisateur" i]',
         'input[name="email"]',
         'input[name="login"]',
         'input[name="user"]',
@@ -336,6 +365,7 @@ export default async ({ page }) => {
         'input[placeholder*="password" i]',
         'input[placeholder*="pass" i]',
         // By placeholder - French
+        'input[placeholder*="Mot de passe" i]',
         'input[placeholder*="mot de passe" i]',
         'input[placeholder*="motdepasse" i]',
         // By ID
@@ -383,7 +413,14 @@ export default async ({ page }) => {
           'button:has-text("Login")',
           'button:has-text("Sign in")',
           'button:has-text("Se connecter")',
+           'button:has-text("Me connecter")',
+  'button[type="submit"]',
+  'button:contains("Me connecter")',
           'button:has-text("Connexion")',
+           'button:has-text("connexion")',
+           'div:has-text("Me connecter")',
+           'div:has-text("connexion")',
+            'div:has-text("submit")',
           'div:has-text("Se connecter")',
           'div:has-text("Login")',
           'div:has-text("Sign in")',
@@ -433,6 +470,43 @@ export default async ({ page }) => {
             loginSuccess: false,
             loginAttempted: true,
             loginError: loginFailedReason,
+            pagesAnalyzed: 0
+          };
+        }
+
+        // STEP 1.5: Wait for potential error messages to appear (Vue/React detection)
+        await wait(2000);
+
+        // Vue/React specific error detection
+        const vueErrorDetection = await page.evaluate(() => {
+          // Search for "incorrect" text anywhere in the page
+          const allText = document.body.textContent || '';
+          if (allText.toLowerCase().includes('incorrect') ||
+              allText.toLowerCase().includes('incorrecte') ||
+              allText.toLowerCase().includes('erreur de connexion')) {
+            return { failed: true, message: 'Identifiants incorrects détectés dans le texte de la page' };
+          }
+
+          // Search in recent dynamic elements (span, div, p)
+          const dynamicElements = document.querySelectorAll('span, div, p');
+          for (const el of dynamicElements) {
+            const text = el.textContent?.toLowerCase() || '';
+            if (text.includes('incorrect') || text.includes('erreur') || text.includes('invalid')) {
+              return { failed: true, message: el.textContent.trim() };
+            }
+          }
+
+          return { failed: false };
+        });
+
+        if (vueErrorDetection.failed) {
+          console.log('Login failed (Vue detection):', vueErrorDetection.message);
+          return {
+            error: 'Login failed: ' + vueErrorDetection.message,
+            features: [],
+            loginSuccess: false,
+            loginAttempted: true,
+            loginError: vueErrorDetection.message,
             pagesAnalyzed: 0
           };
         }
