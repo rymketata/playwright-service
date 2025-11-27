@@ -448,21 +448,23 @@ export default async ({ page }) => {
             submitButton.click()
           ]);
 
-          await wait(3000);
+          // INCREASED: Wait longer for dynamic applications to render error messages
+          console.log('Waiting for potential error messages...');
+          await wait(5000);
         } else {
           console.log('Submit button not found, pressing Enter...');
           await passwordInput.press('Enter');
-          await wait(3000);
+          // INCREASED: Same wait time for Enter key submission
+          await wait(5000);
         }
 
         // Verify login success by checking for error messages
         console.log('Verifying login...');
-
-        // Wait a bit more for potential error messages and API responses
-        await wait(3000);
+        console.log('Checking for login errors...');
 
         // STEP 1: Check if API interceptor caught a failure
         if (loginFailed) {
+          console.log('✓ Login failure detected via API interceptor');
           console.log('Login failed (detected by API interceptor): ' + loginFailedReason);
           return {
             error: 'Login failed: ' + loginFailedReason + '. Please verify your credentials.',
@@ -474,33 +476,103 @@ export default async ({ page }) => {
           };
         }
 
-        // STEP 1.5: Wait for potential error messages to appear (Vue/React detection)
-        await wait(2000);
+        console.log('✓ No API login failure detected');
 
-        // Vue/React specific error detection
+        // STEP 1.5: Enhanced Vue/React error detection
+        console.log('Starting enhanced DOM error detection...');
+
         const vueErrorDetection = await page.evaluate(() => {
-          // Search for "incorrect" text anywhere in the page
-          const allText = document.body.textContent || '';
-          if (allText.toLowerCase().includes('incorrect') ||
-              allText.toLowerCase().includes('incorrecte') ||
-              allText.toLowerCase().includes('erreur de connexion')) {
-            return { failed: true, message: 'Identifiants incorrects détectés dans le texte de la page' };
-          }
+          return new Promise((resolve) => {
+            setTimeout(() => {
+              // Method 1: Search all visible text content
+              const visibleText = Array.from(document.querySelectorAll('body *'))
+                .filter(el => {
+                  const style = window.getComputedStyle(el);
+                  return style.display !== 'none' &&
+                         style.visibility !== 'hidden' &&
+                         el.offsetParent !== null;
+                })
+                .map(el => el.textContent?.toLowerCase() || '')
+                .join(' ');
 
-          // Search in recent dynamic elements (span, div, p)
-          const dynamicElements = document.querySelectorAll('span, div, p');
-          for (const el of dynamicElements) {
-            const text = el.textContent?.toLowerCase() || '';
-            if (text.includes('incorrect') || text.includes('erreur') || text.includes('invalid')) {
-              return { failed: true, message: el.textContent.trim() };
-            }
-          }
+              console.log('Visible text content length:', visibleText.length);
 
-          return { failed: false };
+              // Error patterns in French and English
+              const errorPatterns = [
+                'incorrect', 'incorrecte', 'erreur', 'invalid', 'wrong',
+                'mauvais', 'faux', 'failed', 'échoué', 'échec',
+                'identifiant', 'mot de passe', 'connexion'
+              ];
+
+              // Check for login error combinations
+              const hasLoginError = errorPatterns.some(pattern =>
+                visibleText.includes(pattern) &&
+                (visibleText.includes('login') ||
+                 visibleText.includes('connexion') ||
+                 visibleText.includes('identifiant') ||
+                 visibleText.includes('password') ||
+                 visibleText.includes('mot de passe'))
+              );
+
+              if (hasLoginError) {
+                // Find the exact error message
+                const errorElements = Array.from(document.querySelectorAll('*'))
+                  .filter(el => {
+                    const text = el.textContent?.toLowerCase() || '';
+                    return errorPatterns.some(pattern => text.includes(pattern)) &&
+                           text.length < 200;
+                  });
+
+                const errorMessage = errorElements[0]?.textContent?.trim() || 'Identifiants incorrects';
+                console.log('Found login error via text search:', errorMessage);
+                resolve({ failed: true, message: errorMessage });
+                return;
+              }
+
+              // Method 2: Search notification/toast elements
+              const notificationSelectors = [
+                '[role="alert"]', '[class*="toast"]', '[class*="notification"]',
+                '[class*="message"]', '[class*="error"]', '[class*="alert"]',
+                '[class*="invalid"]', '[class*="danger"]'
+              ];
+
+              for (const selector of notificationSelectors) {
+                const elements = document.querySelectorAll(selector);
+                for (const el of elements) {
+                  const text = el.textContent?.toLowerCase() || '';
+                  if (text && text.length > 0 && text.length < 500) {
+                    const hasError = errorPatterns.some(pattern => text.includes(pattern));
+                    if (hasError) {
+                      console.log('Found login error in notification:', el.textContent.trim());
+                      resolve({ failed: true, message: el.textContent.trim() });
+                      return;
+                    }
+                  }
+                }
+              }
+
+              // Method 3: Check if still on login page
+              const currentUrl = window.location.href;
+              const pageTitle = document.title.toLowerCase();
+              const hasLoginIndicators =
+                document.querySelector('input[type="password"]') !== null ||
+                document.querySelector('input[placeholder*="mot de passe" i]') !== null;
+
+              if (hasLoginIndicators && (currentUrl.includes('login') || pageTitle.includes('login'))) {
+                console.log('Still on login page after submission');
+                resolve({ failed: true, message: 'Reste sur la page de login après soumission' });
+                return;
+              }
+
+              resolve({ failed: false });
+            }, 2000);
+          });
         });
 
+        console.log('DOM error detection result:', vueErrorDetection);
+
         if (vueErrorDetection.failed) {
-          console.log('Login failed (Vue detection):', vueErrorDetection.message);
+          console.log('✓ Login failure detected in DOM:', vueErrorDetection.message);
           return {
             error: 'Login failed: ' + vueErrorDetection.message,
             features: [],
@@ -511,7 +583,25 @@ export default async ({ page }) => {
           };
         }
 
-        // STEP 2: Check DOM for error messages as fallback
+        console.log('✓ No DOM login failure detected');
+
+        // STEP 2: Check URL redirection
+        const currentUrl = await page.url();
+        console.log('Current URL after login attempt:', currentUrl);
+
+        if (currentUrl.includes('login') || currentUrl.includes('connexion')) {
+          console.log('Still on login page - assuming login failed');
+          return {
+            error: 'Login failed: Redirection to authenticated page did not occur',
+            features: [],
+            loginSuccess: false,
+            loginAttempted: true,
+            loginError: 'No redirection after login',
+            pagesAnalyzed: 0
+          };
+        }
+
+        // STEP 3: Check DOM for error messages as fallback
         const domLoginError = await page.evaluate(() => {
           // Check for error messages in TWO ways:
           // 1. Elements with error-related classes
