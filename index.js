@@ -30,7 +30,7 @@ function getCDPWebSocketUrl() {
 
 function getAnalysisScript() {
   return `
-module.exports = async ({ page, context }) => {
+async function run({ page, context }) {
   const { url, urls = [], loginConfig } = context;
   const features = [];
   const logs = [];
@@ -451,7 +451,9 @@ module.exports = async ({ page, context }) => {
       logs: logs
     };
   }
-};
+}
+
+module.exports = run;
 `;
 }
 
