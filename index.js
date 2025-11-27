@@ -289,13 +289,21 @@ export default async ({ page }) => {
         await usernameInput.type(username);
         await passwordInput.type(password);
 
-        // Find and click submit button
+        // Find and click submit button - including DIVs and SPANs
         const submitSelectors = [
           'button[type="submit"]',
           'input[type="submit"]',
           'button:has-text("Login")',
           'button:has-text("Sign in")',
-          'button:has-text("Se connecter")'
+          'button:has-text("Se connecter")',
+          'button:has-text("Connexion")',
+          'div:has-text("Se connecter")',
+          'div:has-text("Login")',
+          'div:has-text("Sign in")',
+          'span:has-text("Se connecter")',
+          'span:has-text("Login")',
+          'a:has-text("Se connecter")',
+          'a:has-text("Login")'
         ];
 
         let submitButton = null;
@@ -470,6 +478,45 @@ export default async ({ page }) => {
               pageUrl
             });
           });
+
+          // Virtual Forms (no <form> tag) - Detect grouped inputs
+          // This handles modern React/Vue SPAs that don't use <form> tags
+          const allInputs = document.querySelectorAll('input[type="email"], input[type="text"], input[type="password"]');
+          const inputsOutsideForms = Array.from(allInputs).filter(input => !input.closest('form'));
+
+          if (inputsOutsideForms.length >= 2) {
+            // Check if we have email + password combination (login form)
+            const hasEmail = inputsOutsideForms.some(input =>
+              input.type === 'email' ||
+              (input.placeholder || '').toLowerCase().includes('email') ||
+              (input.placeholder || '').toLowerCase().includes('e-mail') ||
+              (input.placeholder || '').toLowerCase().includes('mail')
+            );
+
+            const hasPassword = inputsOutsideForms.some(input =>
+              input.type === 'password' ||
+              (input.placeholder || '').toLowerCase().includes('password') ||
+              (input.placeholder || '').toLowerCase().includes('mot de passe')
+            );
+
+            if (hasEmail && hasPassword && forms.length === 0) {
+              // This is a virtual login form
+              const inputDetails = inputsOutsideForms.map(el => ({
+                name: el.getAttribute('name') || el.getAttribute('id') || el.getAttribute('placeholder') || '',
+                type: el.getAttribute('type') || 'text',
+                placeholder: el.getAttribute('placeholder') || '',
+              }));
+
+              features.push({
+                type: 'form',
+                formType: 'login',
+                purpose: 'Login Form (Virtual)',
+                inputs: inputDetails,
+                pageUrl
+              });
+              console.log('✓ Detected virtual login form (no <form> tag)');
+            }
+          }
 
           // Buttons and clickable elements - COMPREHENSIVE detection
           const buttons = document.querySelectorAll(
