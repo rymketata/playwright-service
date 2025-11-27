@@ -225,6 +225,68 @@ export default async ({ page }) => {
 
     if (loginConfig && loginConfig.loginUrl && username && password) {
       console.log('Navigating to login page:', loginConfig.loginUrl);
+
+      // Set up API response interceptor BEFORE navigation
+      // This catches API responses that indicate login failure
+      let loginFailed = false;
+      let loginFailedReason = '';
+
+      page.on('response', async (response) => {
+        const url = response.url();
+
+        // Common API endpoints that indicate authentication
+        const authEndpoints = ['/collaborateurs', '/users', '/auth', '/login', '/session', '/api/user'];
+        const isAuthEndpoint = authEndpoints.some(endpoint => url.includes(endpoint));
+
+        if (isAuthEndpoint) {
+          try {
+            const contentType = response.headers()['content-type'] || '';
+
+            if (contentType.includes('application/json')) {
+              const json = await response.json();
+
+              // Case 1: Empty array => incorrect credentials
+              if (Array.isArray(json) && json.length === 0) {
+                console.log('API returned empty array - login likely failed');
+                loginFailed = true;
+                loginFailedReason = 'API returned empty result (no user found)';
+              }
+
+              // Case 2: API returns error message
+              if (typeof json === 'string' && json.toLowerCase().includes('incorrect')) {
+                loginFailed = true;
+                loginFailedReason = json;
+              }
+
+              // Case 3: Error object
+              if (json?.error) {
+                const errorMsg = typeof json.error === 'string' ? json.error : JSON.stringify(json.error);
+                if (errorMsg.toLowerCase().includes('invalid') ||
+                    errorMsg.toLowerCase().includes('incorrect') ||
+                    errorMsg.toLowerCase().includes('unauthorized')) {
+                  loginFailed = true;
+                  loginFailedReason = errorMsg;
+                }
+              }
+
+              // Case 4: incorrectLogin property
+              if (json?.incorrectLogin === true) {
+                loginFailed = true;
+                loginFailedReason = 'API returned incorrectLogin flag';
+              }
+
+              // Case 5: success: false
+              if (json?.success === false && json?.message) {
+                loginFailed = true;
+                loginFailedReason = json.message;
+              }
+            }
+          } catch (e) {
+            // Not JSON or error parsing - ignore
+          }
+        }
+      });
+
       await page.goto(loginConfig.loginUrl, { waitUntil: 'load', timeout: 30000 });
       await wait(2000);
 
@@ -359,10 +421,24 @@ export default async ({ page }) => {
         // Verify login success by checking for error messages
         console.log('Verifying login...');
 
-        // Wait a bit more for potential error messages to appear
-        await wait(2000);
+        // Wait a bit more for potential error messages and API responses
+        await wait(3000);
 
-        const loginFailed = await page.evaluate(() => {
+        // STEP 1: Check if API interceptor caught a failure
+        if (loginFailed) {
+          console.log('Login failed (detected by API interceptor): ' + loginFailedReason);
+          return {
+            error: 'Login failed: ' + loginFailedReason + '. Please verify your credentials.',
+            features: [],
+            loginSuccess: false,
+            loginAttempted: true,
+            loginError: loginFailedReason,
+            pagesAnalyzed: 0
+          };
+        }
+
+        // STEP 2: Check DOM for error messages as fallback
+        const domLoginError = await page.evaluate(() => {
           // Check for error messages in TWO ways:
           // 1. Elements with error-related classes
           // 2. ANY visible element containing error text
@@ -441,14 +517,14 @@ export default async ({ page }) => {
           return { failed: false, message: 'No error detected' };
         });
 
-        if (loginFailed.failed) {
-          console.log('Login failed: ' + loginFailed.message);
+        if (domLoginError.failed) {
+          console.log('Login failed (detected in DOM): ' + domLoginError.message);
           return {
-            error: 'Login failed: ' + loginFailed.message + '. Please verify your credentials.',
+            error: 'Login failed: ' + domLoginError.message + '. Please verify your credentials.',
             features: [],
             loginSuccess: false,
             loginAttempted: true,
-            loginError: loginFailed.message,
+            loginError: domLoginError.message,
             pagesAnalyzed: 0
           };
         }
