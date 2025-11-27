@@ -377,32 +377,16 @@ export default async ({ page }) => {
       }
 
       if (usernameInput && passwordInput) {
-        console.log('Filling login credentials...');
+        console.log('Filling login credentials (Puppeteer)...');
 
-        // Get the selector that worked for finding the inputs
-        let emailSelector = null;
-        for (const sel of usernameSelectors) {
-          if (await page.$(sel)) { emailSelector = sel; break; }
-        }
+        // Clear and type credentials using Puppeteer methods
+        console.log('Typing email...');
+        await usernameInput.click({ clickCount: 3 }); // Select all
+        await usernameInput.type(username);
 
-        let passSelector = null;
-        for (const sel of passwordSelectors) {
-          if (await page.$(sel)) { passSelector = sel; break; }
-        }
-
-        if (!emailSelector || !passSelector) {
-          return {
-            error: 'Could not find login form fields',
-            features: [],
-            loginSuccess: false,
-            loginAttempted: true,
-            loginError: 'Login form fields not found'
-          };
-        }
-
-        // Use fill instead of type for reliability
-        await page.fill(emailSelector, username);
-        await page.fill(passSelector, password);
+        console.log('Typing password...');
+        await passwordInput.click({ clickCount: 3 }); // Select all
+        await passwordInput.type(password);
 
         console.log('Credentials filled, looking for submit button...');
 
@@ -423,12 +407,18 @@ export default async ({ page }) => {
           'a:has-text("Login")'
         ];
 
-        let loginSelector = null;
+        let submitButton = null;
         for (const sel of submitSelectors) {
-          if (await page.$(sel)) { loginSelector = sel; break; }
+          try {
+            submitButton = await page.$(sel);
+            if (submitButton) {
+              console.log('Found submit button:', sel);
+              break;
+            }
+          } catch (e) {}
         }
 
-        if (!loginSelector) {
+        if (!submitButton) {
           return {
             error: 'Could not find login button',
             features: [],
@@ -438,8 +428,8 @@ export default async ({ page }) => {
           };
         }
 
-        console.log('Clicking login button:', loginSelector);
-        await page.click(loginSelector);
+        console.log('Clicking login button...');
+        await submitButton.click();
 
         // Wait for API response and page reaction
         await wait(4000);
