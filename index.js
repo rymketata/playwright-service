@@ -239,17 +239,22 @@ export default async ({ page }) => {
         const isAuthEndpoint = authEndpoints.some(endpoint => url.includes(endpoint));
 
         if (isAuthEndpoint) {
+          console.log('Detected auth endpoint:', url);
           try {
             const contentType = response.headers()['content-type'] || '';
+            console.log('Content-Type:', contentType);
 
             if (contentType.includes('application/json')) {
               const json = await response.json();
+              console.log('API Response:', JSON.stringify(json));
 
               // Case 1: Empty array => incorrect credentials
               if (Array.isArray(json) && json.length === 0) {
-                console.log('API returned empty array - login likely failed');
+                console.log('✗ API returned empty array - login FAILED');
                 loginFailed = true;
                 loginFailedReason = 'API returned empty result (no user found)';
+              } else if (Array.isArray(json) && json.length > 0) {
+                console.log('✓ API returned data - login likely SUCCESS');
               }
 
               // Case 2: API returns error message
@@ -373,8 +378,33 @@ export default async ({ page }) => {
 
       if (usernameInput && passwordInput) {
         console.log('Filling login credentials...');
-        await usernameInput.type(username);
-        await passwordInput.type(password);
+
+        // Get the selector that worked for finding the inputs
+        let emailSelector = null;
+        for (const sel of usernameSelectors) {
+          if (await page.$(sel)) { emailSelector = sel; break; }
+        }
+
+        let passSelector = null;
+        for (const sel of passwordSelectors) {
+          if (await page.$(sel)) { passSelector = sel; break; }
+        }
+
+        if (!emailSelector || !passSelector) {
+          return {
+            error: 'Could not find login form fields',
+            features: [],
+            loginSuccess: false,
+            loginAttempted: true,
+            loginError: 'Login form fields not found'
+          };
+        }
+
+        // Use fill instead of type for reliability
+        await page.fill(emailSelector, username);
+        await page.fill(passSelector, password);
+
+        console.log('Credentials filled, looking for submit button...');
 
         // Find and click submit button - including DIVs and SPANs
         const submitSelectors = [
@@ -393,36 +423,31 @@ export default async ({ page }) => {
           'a:has-text("Login")'
         ];
 
-        let submitButton = null;
-        for (const selector of submitSelectors) {
-          try {
-            submitButton = await page.$(selector);
-            if (submitButton) {
-              console.log('Found submit button:', selector);
-              break;
-            }
-          } catch (e) {}
+        let loginSelector = null;
+        for (const sel of submitSelectors) {
+          if (await page.$(sel)) { loginSelector = sel; break; }
         }
 
-        if (submitButton) {
-          console.log('Clicking login button...');
-          await Promise.all([
-            page.waitForNavigation({ waitUntil: 'load', timeout: 15000 }).catch(() => {}),
-            submitButton.click()
-          ]);
-
-          await wait(3000);
-        } else {
-          console.log('Submit button not found, pressing Enter...');
-          await passwordInput.press('Enter');
-          await wait(3000);
+        if (!loginSelector) {
+          return {
+            error: 'Could not find login button',
+            features: [],
+            loginSuccess: false,
+            loginAttempted: true,
+            loginError: 'Login button not found'
+          };
         }
+
+        console.log('Clicking login button:', loginSelector);
+        await page.click(loginSelector);
+
+        // Wait for API response and page reaction
+        await wait(4000);
 
         // Verify login success by checking for error messages
         console.log('Verifying login...');
-
-        // Wait a bit more for potential error messages and API responses
-        await wait(3000);
+        console.log('loginFailed flag:', loginFailed);
+        console.log('loginFailedReason:', loginFailedReason);
 
         // STEP 1: Check if API interceptor caught a failure
         if (loginFailed) {
