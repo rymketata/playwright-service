@@ -325,15 +325,20 @@ export default async ({ page }) => {
 
         // Verify login success by checking for error messages
         console.log('Verifying login...');
-        const currentUrl = page.url();
 
-        const loginFailed = await page.evaluate((loginUrl) => {
-          // STEP 1: Check for explicit error messages
+        // Wait a bit more for potential error messages to appear
+        await wait(2000);
+
+        const loginFailed = await page.evaluate(() => {
+          // ONLY check for EXPLICIT error messages
+          // Strategy: Assume success unless we find clear error indicators
+
           const errorSelectors = [
             'div[class*="error"]', 'span[class*="error"]', 'p[class*="error"]',
             'div[class*="alert"]', 'div[class*="danger"]', 'div[class*="invalid"]',
-            'div[role="alert"]', '[aria-invalid="true"]', 'div[class*="message"]',
-            'span[class*="alert"]', 'p[class*="alert"]'
+            'div[role="alert"]', '[aria-invalid="true"]',
+            'span[class*="alert"]', 'p[class*="alert"]',
+            'div[class*="notification"]', 'div[class*="toast"]'
           ];
 
           for (const selector of errorSelectors) {
@@ -341,48 +346,32 @@ export default async ({ page }) => {
             for (const el of elements) {
               // Check if element is visible
               const rect = el.getBoundingClientRect();
+              const style = window.getComputedStyle(el);
               const isVisible = rect.width > 0 && rect.height > 0 &&
-                               window.getComputedStyle(el).display !== 'none' &&
-                               window.getComputedStyle(el).visibility !== 'hidden';
+                               style.display !== 'none' &&
+                               style.visibility !== 'hidden' &&
+                               parseFloat(style.opacity) > 0;
 
               if (!isVisible) continue;
 
               const text = el.textContent?.toLowerCase() || '';
-              // Check for error keywords in multiple languages
-              if (text.includes('incorrect') || text.includes('invalid') || text.includes('wrong') ||
+
+              // Check for error keywords (must be explicit)
+              if ((text.includes('incorrect') || text.includes('invalid') || text.includes('wrong') ||
                   text.includes('failed') || text.includes('erreur') || text.includes('incorrecte') ||
                   text.includes('invalide') || text.includes('échoué') || text.includes('echec') ||
-                  text.includes('échec') || text.includes('mauvais') || text.includes('denied')) {
+                  text.includes('échec') || text.includes('mauvais') || text.includes('denied')) &&
+                  // Must also mention password, credentials, login, or authentication
+                  (text.includes('password') || text.includes('credential') || text.includes('login') ||
+                   text.includes('mot de passe') || text.includes('identifiant') || text.includes('auth'))) {
                 return { failed: true, message: el.textContent?.trim() || 'Login failed' };
               }
             }
           }
 
-          // STEP 2: Check if URL changed (success indicator)
-          const currentPageUrl = window.location.href;
-          if (currentPageUrl !== loginUrl) {
-            console.log('URL changed from login page - likely success');
-            return { failed: false, message: 'URL changed - success' };
-          }
-
-          // STEP 3: Check if login form is VISIBLE (not just present in DOM)
-          const passwordField = document.querySelector('input[type="password"]');
-          if (passwordField) {
-            const rect = passwordField.getBoundingClientRect();
-            const isVisible = rect.width > 0 && rect.height > 0 &&
-                             window.getComputedStyle(passwordField).display !== 'none' &&
-                             window.getComputedStyle(passwordField).visibility !== 'hidden' &&
-                             window.getComputedStyle(passwordField).opacity !== '0';
-
-            // Only fail if password field is VISIBLE and we're still on login URL
-            if (isVisible && (currentPageUrl.includes('login') || currentPageUrl.includes('auth') ||
-                currentPageUrl.includes('signin') || currentPageUrl.includes('connexion'))) {
-              return { failed: true, message: 'Still on login page - credentials may be incorrect' };
-            }
-          }
-
-          return { failed: false, message: '' };
-        }, loginConfig.loginUrl);
+          // No error found - assume success
+          return { failed: false, message: 'No error detected' };
+        });
 
         if (loginFailed.failed) {
           console.log('Login failed: ' + loginFailed.message);
