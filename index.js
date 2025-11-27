@@ -338,21 +338,23 @@ export default async ({ page }) => {
         await wait(2000);
 
         const loginFailed = await page.evaluate(() => {
-          // ONLY check for EXPLICIT error messages
-          // Strategy: Assume success unless we find clear error indicators
+          // Check for error messages in TWO ways:
+          // 1. Elements with error-related classes
+          // 2. ANY visible element containing error text
 
+          // STEP 1: Check error-styled elements
           const errorSelectors = [
             'div[class*="error"]', 'span[class*="error"]', 'p[class*="error"]',
             'div[class*="alert"]', 'div[class*="danger"]', 'div[class*="invalid"]',
             'div[role="alert"]', '[aria-invalid="true"]',
             'span[class*="alert"]', 'p[class*="alert"]',
-            'div[class*="notification"]', 'div[class*="toast"]'
+            'div[class*="notification"]', 'div[class*="toast"]',
+            'div[class*="message"]', 'span[class*="message"]'
           ];
 
           for (const selector of errorSelectors) {
             const elements = document.querySelectorAll(selector);
             for (const el of elements) {
-              // Check if element is visible
               const rect = el.getBoundingClientRect();
               const style = window.getComputedStyle(el);
               const isVisible = rect.width > 0 && rect.height > 0 &&
@@ -364,14 +366,47 @@ export default async ({ page }) => {
 
               const text = el.textContent?.toLowerCase() || '';
 
-              // Check for error keywords (must be explicit)
-              if ((text.includes('incorrect') || text.includes('invalid') || text.includes('wrong') ||
-                  text.includes('failed') || text.includes('erreur') || text.includes('incorrecte') ||
-                  text.includes('invalide') || text.includes('échoué') || text.includes('echec') ||
-                  text.includes('échec') || text.includes('mauvais') || text.includes('denied')) &&
-                  // Must also mention password, credentials, login, or authentication
-                  (text.includes('password') || text.includes('credential') || text.includes('login') ||
-                   text.includes('mot de passe') || text.includes('identifiant') || text.includes('auth'))) {
+              // Check for login error patterns
+              if (text.includes('incorrect') || text.includes('invalid') ||
+                  text.includes('wrong') || text.includes('failed') ||
+                  text.includes('incorrecte') || text.includes('invalide') ||
+                  text.includes('échoué') || text.includes('échec') ||
+                  text.includes('désactivé') || text.includes('desactive')) {
+                return { failed: true, message: el.textContent?.trim() || 'Login failed' };
+              }
+            }
+          }
+
+          // STEP 2: Search ALL visible text for common error phrases
+          // This catches errors that might not be in specially-styled elements
+          const allElements = document.querySelectorAll('div, span, p');
+          for (const el of allElements) {
+            const rect = el.getBoundingClientRect();
+            const style = window.getComputedStyle(el);
+            const isVisible = rect.width > 0 && rect.height > 0 &&
+                             style.display !== 'none' &&
+                             style.visibility !== 'hidden' &&
+                             parseFloat(style.opacity) > 0;
+
+            if (!isVisible) continue;
+
+            const text = el.textContent?.toLowerCase() || '';
+
+            // Specific error phrases that indicate login failure
+            const errorPhrases = [
+              'email ou mot de passe incorrect',
+              'identifiants incorrects',
+              'compte désactivé',
+              'invalid credentials',
+              'incorrect password',
+              'login failed',
+              'authentication failed',
+              'échec de connexion',
+              'connexion échouée'
+            ];
+
+            for (const phrase of errorPhrases) {
+              if (text.includes(phrase)) {
                 return { failed: true, message: el.textContent?.trim() || 'Login failed' };
               }
             }
