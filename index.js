@@ -140,34 +140,59 @@ app.post('/analyze', async (req, res) => {
     const result = await response.json();
     console.log(`✓ Script executed successfully`);
 
-    if (result.error) {
-      console.error('Script execution error:', result.error);
+    // Browserless sometimes wraps the script result in `data`
+    const scriptOutput = result.data || result;
+
+    // Check for general script errors
+    if (scriptOutput.error) {
+      console.error('Script execution error:', scriptOutput.error);
+
+      // Detect login failure specifically
+      if (scriptOutput.error.includes('Login failed') || scriptOutput.error.includes('Identifiants incorrects')) {
+        return res.status(500).json({
+          success: false,
+          message: scriptOutput.error,
+          loginSuccess: false
+        });
+      }
+
       return res.status(500).json({
         success: false,
-        message: result.error
+        message: scriptOutput.error
       });
     }
 
-    if (!result.features || result.features.length === 0) {
+    // Check if login was explicitly marked as failed
+    if (scriptOutput.loginSuccess === false && scriptOutput.loginAttempted === true) {
+      const errorMsg = scriptOutput.loginError || 'Login failed. Please verify your credentials.';
+      console.error('Login failed:', errorMsg);
+      return res.status(500).json({
+        success: false,
+        message: `Login failed: ${errorMsg}`,
+        loginSuccess: false
+      });
+    }
+
+    if (!scriptOutput.features || scriptOutput.features.length === 0) {
       return res.json({
         success: false,
         message: "No functional elements detected after JavaScript execution.",
         debug: {
-          loginSuccess: result.loginSuccess,
-          pagesAnalyzed: result.pagesAnalyzed,
-          screenshots: result.screenshots
+          loginSuccess: scriptOutput.loginSuccess,
+          pagesAnalyzed: scriptOutput.pagesAnalyzed,
+          screenshots: scriptOutput.screenshots
         }
       });
     }
 
-    const tests = generateTestCasesFromFeatures(result.features);
+    const tests = generateTestCasesFromFeatures(scriptOutput.features);
     console.log(`✓ Generated ${tests.length} test cases`);
 
     res.json({
       success: true,
       tests,
-      loginSuccess: result.loginSuccess,
-      pagesAnalyzed: result.pagesAnalyzed
+      loginSuccess: scriptOutput.loginSuccess,
+      pagesAnalyzed: scriptOutput.pagesAnalyzed
     });
 
   } catch (error) {
@@ -422,6 +447,8 @@ export default async ({ page }) => {
             error: 'Login failed: ' + loginFailed.message + '. Please verify your credentials.',
             features: [],
             loginSuccess: false,
+            loginAttempted: true,
+            loginError: loginFailed.message,
             pagesAnalyzed: 0
           };
         }
@@ -430,7 +457,13 @@ export default async ({ page }) => {
         console.log('Login verified successfully');
       } else {
         console.log('Login form not found');
-        return { error: 'Login form not found on the page', features: [], loginSuccess: false };
+        return {
+          error: 'Login form not found on the page',
+          features: [],
+          loginSuccess: false,
+          loginAttempted: true,
+          loginError: 'Login form not found'
+        };
       }
     }
 
