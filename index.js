@@ -320,7 +320,7 @@ export default async ({ page }) => {
       // Try to find and fill login form - comprehensive selectors for both French and English
       const usernameSelectors = [
         // By attribute name (most reliable)
-        'input[name="username"]','input[placeholder*="E-mail ou nom d\'utilisateur" i]',
+        'input[name="username"]','input[placeholder*="E-mail ou nom d\\'utilisateur" i]',
   'input[placeholder*="E-mail" i]', 
   'input[placeholder*="utilisateur" i]',
         'input[name="email"]',
