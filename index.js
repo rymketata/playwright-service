@@ -597,7 +597,7 @@ app.post('/analyze', async (req, res) => {
     const cdpUrl = getCDPWebSocketUrl();
     const script = getAnalysisScript();
 
-    const response = await fetch('https://production-sfo.browserless.io/function', {
+    const response = await fetch(`https://production-sfo.browserless.io/function?token=${BROWSERLESS_TOKEN}`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -609,8 +609,7 @@ app.post('/analyze', async (req, res) => {
           url: targetUrls[0],
           urls: targetUrls,
           loginConfig
-        },
-        token: BROWSERLESS_TOKEN
+        }
       })
     });
 
