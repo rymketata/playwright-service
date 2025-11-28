@@ -537,14 +537,7 @@ export default async ({ page }) => {
         console.log('Total network responses:', networkResponses.length);
         console.log('');
         console.log('--- REQUEST SUMMARY ---');
-        networkRequests.forEach((req, idx) => {
-          console.log(`[${idx + 1}] ${req.method} ${req.url}`);
-        });
-        console.log('');
-        console.log('--- RESPONSE SUMMARY ---');
-        networkResponses.forEach((res, idx) => {
-          console.log(`[${idx + 1}] ${res.status} ${res.url} (${res.contentType})`);
-        });
+        
         console.log('');
         console.log('Checking for login errors...');
 
