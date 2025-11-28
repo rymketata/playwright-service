@@ -533,97 +533,33 @@ export default async ({ page }) => {
         }
 
 
-        // STEP 1.5: Enhanced Vue/React error detection
+        // STEP 1.5: Check only explicit error notification elements (NO text scanning)
 
         const vueErrorDetection = await page.evaluate(() => {
           return new Promise((resolve) => {
             setTimeout(() => {
-              // Method 1: Search all visible text content
-              const visibleText = Array.from(document.querySelectorAll('body *'))
-                .filter(el => {
-                  const style = window.getComputedStyle(el);
-                  return style.display !== 'none' &&
-                         style.visibility !== 'hidden' &&
-                         el.offsetParent !== null;
-                })
-                .map(el => el.textContent?.toLowerCase() || '')
-                .join(' ');
-
-
-              // STRICT error detection - only look for explicit error phrases
-              const strictErrorPhrases = [
-                'identifiant incorrect',
-                'identifiants incorrects',
-                'mot de passe incorrect',
-                'login incorrect',
-                'connexion échouée',
-                'échec de connexion',
-                'erreur de connexion',
-                'invalid credentials',
-                'invalid login',
-                'login failed',
-                'authentication failed',
-                'incorrect username',
-                'incorrect password',
-                'mauvais identifiants',
-                'identifiant invalide',
-                'mot de passe invalide'
-              ];
-
-              // Check for explicit error phrases only
-              let foundErrorPhrase = null;
-              for (const phrase of strictErrorPhrases) {
-                if (visibleText.includes(phrase)) {
-                  foundErrorPhrase = phrase;
-                  break;
-                }
-              }
-
-              if (foundErrorPhrase) {
-                // Find the element containing the error
-                const errorElements = Array.from(document.querySelectorAll('*'))
-                  .filter(el => {
-                    const text = el.textContent?.toLowerCase() || '';
-                    return text.includes(foundErrorPhrase) && text.length < 200;
-                  });
-
-                const errorMessage = errorElements[0]?.textContent?.trim() || 'Identifiants incorrects';
-                resolve({ failed: true, message: errorMessage });
-                return;
-              }
-
-              // Method 2: Search notification/toast/alert elements with STRICT matching
+              // Only check for explicit error/alert notification elements
+              // NO text scanning to avoid false positives
               const notificationSelectors = [
-                '[role="alert"]', '[class*="toast"]', '[class*="notification"]',
-                '[class*="error"]', '[class*="alert"]',
-                '[class*="invalid"]', '[class*="danger"]'
+                '[role="alert"]',
+                '[class*="toast"][class*="error"]',
+                '[class*="notification"][class*="error"]',
+                '[class*="alert-danger"]',
+                '[class*="alert-error"]',
+                'div[class*="error"][class*="message"]'
               ];
 
               for (const selector of notificationSelectors) {
                 const elements = document.querySelectorAll(selector);
                 for (const el of elements) {
-                  const text = el.textContent?.toLowerCase() || '';
-                  if (text && text.length > 0 && text.length < 500) {
-                    // Use strict error phrases only
-                    const hasError = strictErrorPhrases.some(phrase => text.includes(phrase));
-                    if (hasError) {
-                      resolve({ failed: true, message: el.textContent.trim() });
-                      return;
-                    }
+                  const text = el.textContent?.trim() || '';
+                  // Only consider visible elements with actual text
+                  const isVisible = el.offsetParent !== null;
+                  if (isVisible && text.length > 5 && text.length < 200) {
+                    resolve({ failed: true, message: text });
+                    return;
                   }
                 }
-              }
-
-              // Method 3: Check if still on login page
-              const currentUrl = window.location.href;
-              const pageTitle = document.title.toLowerCase();
-              const hasLoginIndicators =
-                document.querySelector('input[type="password"]') !== null ||
-                document.querySelector('input[placeholder*="mot de passe" i]') !== null;
-
-              if (hasLoginIndicators && (currentUrl.includes('login') || pageTitle.includes('login'))) {
-                resolve({ failed: true, message: 'Reste sur la page de login après soumission' });
-                return;
               }
 
               resolve({ failed: false });
@@ -691,55 +627,17 @@ export default async ({ page }) => {
 
               if (!isVisible) continue;
 
-              const text = el.textContent?.toLowerCase() || '';
+              const text = el.textContent?.trim() || '';
 
-              // Check for login error patterns
-              if (text.includes('incorrect') || text.includes('invalid') ||
-                  text.includes('wrong') || text.includes('failed') ||
-                  text.includes('incorrecte') || text.includes('invalide') ||
-                  text.includes('échoué') || text.includes('échec') ||
-                  text.includes('désactivé') || text.includes('desactive')) {
-                return { failed: true, message: el.textContent?.trim() || 'Login failed' };
+              // Only consider elements with short error messages (not containers)
+              // and only if they contain actual error text
+              if (text.length > 10 && text.length < 100) {
+                return { failed: true, message: text };
               }
             }
           }
 
-          // STEP 2: Search ALL visible text for common error phrases
-          // This catches errors that might not be in specially-styled elements
-          const allElements = document.querySelectorAll('div, span, p');
-          for (const el of allElements) {
-            const rect = el.getBoundingClientRect();
-            const style = window.getComputedStyle(el);
-            const isVisible = rect.width > 0 && rect.height > 0 &&
-                             style.display !== 'none' &&
-                             style.visibility !== 'hidden' &&
-                             parseFloat(style.opacity) > 0;
-
-            if (!isVisible) continue;
-
-            const text = el.textContent?.toLowerCase() || '';
-
-            // Specific error phrases that indicate login failure
-            const errorPhrases = [
-              'email ou mot de passe incorrect',
-              'identifiants incorrects',
-              'compte désactivé',
-              'invalid credentials',
-              'incorrect password',
-              'login failed',
-              'authentication failed',
-              'échec de connexion',
-              'connexion échouée'
-            ];
-
-            for (const phrase of errorPhrases) {
-              if (text.includes(phrase)) {
-                return { failed: true, message: el.textContent?.trim() || 'Login failed' };
-              }
-            }
-          }
-
-          // No error found - assume success
+          // No error elements found - assume success
           return { failed: false, message: 'No error detected' };
         });
 
