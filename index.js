@@ -79,12 +79,16 @@ app.post('/analyze', async (req, res) => {
   req.setTimeout(120000);
 
   try {
-    const { url, urls = [], pages = [], loginConfig } = req.body;
+    console.log('=== RECEIVED REQUEST ===');
+    console.log('Request body:', JSON.stringify(req.body, null, 2));
 
-    if (!url && (!urls || urls.length === 0) && (!pages || pages.length === 0)) {
+    const { url, urls = [], loginConfig } = req.body;
+    console.log('Extracted - url:', url, 'urls:', urls, 'urls.length:', urls?.length);
+
+    if (!url && (!urls || urls.length === 0)) {
       return res.status(400).json({
         success: false,
-        message: 'URL or URLs/pages array is required'
+        message: 'URL or URLs array is required'
       });
     }
 
@@ -95,39 +99,20 @@ app.post('/analyze', async (req, res) => {
       });
     }
 
-    // Support both 'urls' and 'pages' parameter names
-    const additionalUrls = pages.length > 0 ? pages : urls;
-    let targetUrls;
-
-    if (additionalUrls && additionalUrls.length > 0) {
-      targetUrls = url ? [url, ...additionalUrls] : additionalUrls;
-    } else {
-      targetUrls = url ? [url] : [];
-    }
-
-    // Filter out undefined/empty values
-    targetUrls = targetUrls.filter(u => u && u.trim());
-
-    console.log('=== RECEIVED REQUEST ===');
-    console.log('Request body:', JSON.stringify(req.body, null, 2));
-    console.log('');
-    console.log('=== ANALYZING ' + targetUrls.length + ' PAGE(S) ===');
+    const targetUrls = urls && urls.length > 0 ? urls : [url];
+    console.log(`=== ANALYZING ${targetUrls.length} PAGE(S) ===`);
     console.log('Target URLs:', targetUrls);
-    console.log('');
 
     if (loginConfig) {
-      console.log('Login config provided for:', loginConfig.loginUrl);
-      console.log('Login config details:', JSON.stringify({
+      console.log(`Login config provided for: ${loginConfig.loginUrl}`);
+      console.log(`Login config details:`, JSON.stringify({
         hasUsername: !!loginConfig.username,
         hasPassword: !!loginConfig.password,
-        hasTestUsername: !!loginConfig.testUsername,
-        hasTestPassword: !!loginConfig.testPassword,
         loginUrl: loginConfig.loginUrl
       }));
     } else {
       console.log('No login config provided');
     }
-    console.log('');
 
     // Build the Playwright script
     const script = buildPlaywrightScript(targetUrls, loginConfig);
@@ -154,83 +139,42 @@ app.post('/analyze', async (req, res) => {
 
     const result = await response.json();
     console.log(`✓ Script executed successfully`);
+    console.log('Result:', JSON.stringify(result, null, 2));
 
-    // Browserless sometimes wraps the script result in `data`
-    const scriptOutput = result.data || result;
-
-    // Check for general script errors
-    if (scriptOutput.error) {
-      console.error('Script execution error:', scriptOutput.error);
-
-      // Detect login failure specifically
-      if (scriptOutput.error.includes('Login failed') || scriptOutput.error.includes('Identifiants incorrects')) {
-        return res.status(500).json({
-          success: false,
-          message: scriptOutput.error,
-          loginSuccess: false
-        });
-      }
-
+    if (result.error) {
+      console.error('Script execution error:', result.error);
       return res.status(500).json({
         success: false,
-        message: scriptOutput.error
+        message: result.error,
+        debug: result
       });
     }
 
-    // Check if login was explicitly marked as failed
-    if (scriptOutput.loginSuccess === false && scriptOutput.loginAttempted === true) {
-      const errorMsg = scriptOutput.loginError || 'Login failed. Please verify your credentials.';
-      console.log('');
-      console.log('=== LOGIN FAILURE DETECTED ===');
-      console.log('Error:', errorMsg);
-      if (scriptOutput.networkRequests) {
-        console.log('Network requests during login:', scriptOutput.networkRequests.length);
-      }
-      if (scriptOutput.networkResponses) {
-        console.log('Network responses during login:', scriptOutput.networkResponses.length);
-        console.log('Response summary:');
-        scriptOutput.networkResponses.forEach((res, idx) => {
-          if (idx < 10) { // Show first 10 responses
-            console.log('  [' + (idx + 1) + '] ' + res.status + ' ' + res.url);
-          }
-        });
-      }
-      console.log('');
-      return res.status(500).json({
-        success: false,
-        message: `Login failed: ${errorMsg}`,
-        loginSuccess: false
-      });
-    }
-
-    if (!scriptOutput.features || scriptOutput.features.length === 0) {
+    if (!result.features || result.features.length === 0) {
+      console.log('⚠️ No features found');
+      console.log('Login success:', result.loginSuccess);
+      console.log('Pages analyzed:', result.pagesAnalyzed);
+      console.log('Logs:', result.logs);
       return res.json({
         success: false,
         message: "No functional elements detected after JavaScript execution.",
         debug: {
-          loginSuccess: scriptOutput.loginSuccess,
-          pagesAnalyzed: scriptOutput.pagesAnalyzed,
-          screenshots: scriptOutput.screenshots
+          loginSuccess: result.loginSuccess,
+          pagesAnalyzed: result.pagesAnalyzed,
+          logs: result.logs,
+          fullResult: result
         }
       });
     }
 
-    // Log login success if login was attempted
-    if (scriptOutput.loginAttempted && scriptOutput.loginSuccess) {
-      console.log('');
-      console.log('=== LOGIN SUCCESS ===');
-      console.log('✓ User successfully authenticated');
-      console.log('');
-    }
-
-    const tests = generateTestCasesFromFeatures(scriptOutput.features);
+    const tests = generateTestCasesFromFeatures(result.features);
     console.log(`✓ Generated ${tests.length} test cases`);
 
     res.json({
       success: true,
       tests,
-      loginSuccess: scriptOutput.loginSuccess,
-      pagesAnalyzed: scriptOutput.pagesAnalyzed
+      loginSuccess: result.loginSuccess,
+      pagesAnalyzed: result.pagesAnalyzed
     });
 
   } catch (error) {
@@ -251,191 +195,80 @@ export default async ({ page }) => {
   const urls = ${urlsJson};
   const loginConfig = ${loginJson};
   const features = [];
+  const logs = [];
   let loginSuccess = false;
 
-  // Helper function for waiting
+  const log = (msg) => {
+    logs.push(msg);
+  };
+
   const wait = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
   try {
-    // Step 1: Handle login if credentials provided
+    log('Script started - Analyzing ' + urls.length + ' page(s)');
+
+    // Support both formats: username/password OR testUsername/testPassword
     const username = loginConfig?.username || loginConfig?.testUsername;
     const password = loginConfig?.password || loginConfig?.testPassword;
 
+    log('Login config received: ' + JSON.stringify({
+      hasConfig: !!loginConfig,
+      hasLoginUrl: !!(loginConfig && loginConfig.loginUrl),
+      hasUsername: !!username,
+      hasPassword: !!password
+    }));
+
+    // Step 1: Handle login if credentials provided
     if (loginConfig && loginConfig.loginUrl && username && password) {
-      // Track all network requests during login
-      const networkRequests = [];
-      const networkResponses = [];
-
-      // Log all requests
-      page.on('request', (request) => {
-        const requestInfo = {
-          url: request.url(),
-          method: request.method(),
-          resourceType: request.resourceType(),
-          timestamp: new Date().toISOString()
-        };
-        networkRequests.push(requestInfo);
-      });
-
-      // Set up API response interceptor BEFORE navigation
-      // This catches API responses that indicate login failure
-      let loginFailed = false;
-      let loginFailedReason = '';
-
-      page.on('response', async (response) => {
-        const responseInfo = {
-          url: response.url(),
-          status: response.status(),
-          statusText: response.statusText(),
-          contentType: response.headers()['content-type'] || '',
-          timestamp: new Date().toISOString()
-        };
-        networkResponses.push(responseInfo);
-        const url = response.url();
-        if (url.includes('login_fetch.php')) {
-    try {
-      const text = await response.text();
-      
-      // Détection directe du texte "IncorrectLogin"
-      if (text.includes('IncorrectLogin')) {
-        loginFailed = true;
-        loginFailedReason = 'Identifiants incorrects (détecté via login_fetch.php)';
-      }
-      
-      // Si c'est du JSON, vérifier la structure
-      if (response.headers()['content-type']?.includes('application/json')) {
-        try {
-          const json = JSON.parse(text);
-          if (json === 'IncorrectLogin' || json.error === 'IncorrectLogin') {
-            loginFailed = true;
-            loginFailedReason = 'Identifiants incorrects';
-          }
-        } catch (e) {
-          // Pas du JSON, on ignore
-        }
-      }
-    } catch (e) {
-      // Erreur de lecture de la réponse
-    }
-  }
-
-        // Common API endpoints that indicate authentication
-        const authEndpoints = ['/collaborateurs', '/users', '/auth', '/login', '/session', '/api/user'];
-        const isAuthEndpoint = authEndpoints.some(endpoint => url.includes(endpoint));
-
-        if (isAuthEndpoint) {
-          try {
-            const contentType = response.headers()['content-type'] || '';
-
-            if (contentType.includes('application/json')) {
-              const json = await response.json();
-
-              // Case 1: Empty array => incorrect credentials
-              if (Array.isArray(json) && json.length === 0) {
-                loginFailed = true;
-                loginFailedReason = 'API returned empty result (no user found)';
-              }
-
-              // Case 2: API returns error message
-              if (typeof json === 'string' && json.toLowerCase().includes('incorrect')) {
-                loginFailed = true;
-                loginFailedReason = json;
-              }
-
-              // Case 3: Error object
-              if (json?.error) {
-                const errorMsg = typeof json.error === 'string' ? json.error : JSON.stringify(json.error);
-                if (errorMsg.toLowerCase().includes('invalid') ||
-                    errorMsg.toLowerCase().includes('incorrect') ||
-                    errorMsg.toLowerCase().includes('unauthorized')) {
-                  loginFailed = true;
-                  loginFailedReason = errorMsg;
-                }
-              }
-
-              // Case 4: incorrectLogin property
-              if (json?.incorrectLogin === true) {
-                loginFailed = true;
-                loginFailedReason = 'API returned incorrectLogin flag';
-              }
-
-              // Case 5: success: false
-              if (json?.success === false && json?.message) {
-                loginFailed = true;
-                loginFailedReason = json.message;
-              }
-            }
-          } catch (e) {
-            // Not JSON or error parsing - ignore
-          }
-        }
-      });
-
-      await page.goto(loginConfig.loginUrl, { waitUntil: 'load', timeout: 30000 });
-
+      log('Navigating to login page: ' + loginConfig.loginUrl);
+      await page.goto(loginConfig.loginUrl, { waitUntil: 'networkidle0', timeout: 30000 });
       await wait(2000);
 
+      const htmlPreview = await page.content();
+      log('Page loaded (' + htmlPreview.length + ' bytes)');
+      log('HTML preview: ' + htmlPreview.substring(0, 300));
+      log('Looking for login form...');
 
-      // Try to find and fill login form - comprehensive selectors for both French and English
+      // Try to find and fill login form with multilingual support
       const usernameSelectors = [
-        // By attribute name (most reliable)
-        'input[name="username"]','input[placeholder*="E-mail ou nom d\\'utilisateur" i]',
-  'input[placeholder*="E-mail" i]', 
-  'input[placeholder*="utilisateur" i]',
+        'input[name="username"]',
         'input[name="email"]',
         'input[name="login"]',
         'input[name="user"]',
-        'input[name="identifier"]',
-        // By type
+        'input[name="nom"]',
         'input[type="email"]',
-        // By placeholder - English
-        'input[placeholder*="email" i]',
+        'input[type="text"][name*="email" i]',
+        'input[type="text"][name*="user" i]',
         'input[placeholder*="username" i]',
-        'input[placeholder*="user name" i]',
-        'input[placeholder*="login" i]',
-        // By placeholder - French
-        'input[placeholder*="mail" i]',
+        'input[placeholder*="email" i]',
+        'input[placeholder*="nom" i]',
         'input[placeholder*="utilisateur" i]',
         'input[placeholder*="identifiant" i]',
-        'input[placeholder*="nom" i]',
-        // By ID
         'input[id*="username" i]',
         'input[id*="email" i]',
         'input[id*="login" i]',
         'input[id*="user" i]',
-        // By class
-        'input[class*="email" i]',
-        'input[class*="username" i]',
-        'input[class*="login" i]',
-        // Fallback - first text or email input in form
-        'form input[type="email"]',
-        'form input[type="text"]:first-of-type'
+        'input[aria-label*="email" i]',
+        'input[aria-label*="username" i]',
+        'input[aria-label*="nom" i]'
       ];
 
       const passwordSelectors = [
-        // By attribute name
         'input[name="password"]',
         'input[name="passwd"]',
         'input[name="pwd"]',
-        'input[name="pass"]',
-        // By type (most reliable for password)
+        'input[name="motdepasse"]',
+        'input[name="mot_de_passe"]',
         'input[type="password"]',
-        // By placeholder - English
-        'input[placeholder*="password" i]',
-        'input[placeholder*="pass" i]',
-        // By placeholder - French
-        'input[placeholder*="Mot de passe" i]',
-        'input[placeholder*="mot de passe" i]',
-        'input[placeholder*="motdepasse" i]',
-        // By ID
         'input[id*="password" i]',
         'input[id*="passwd" i]',
-        'input[id*="pass" i]',
-        // By class
-        'input[class*="password" i]',
-        'input[class*="passwd" i]',
-        // Fallback
-        'form input[type="password"]'
+        'input[id*="pwd" i]',
+        'input[id*="motdepasse" i]',
+        'input[placeholder*="password" i]',
+        'input[placeholder*="mot de passe" i]',
+        'input[placeholder*="motdepasse" i]',
+        'input[aria-label*="password" i]',
+        'input[aria-label*="mot de passe" i]'
       ];
 
       let usernameInput = null;
@@ -443,12 +276,10 @@ export default async ({ page }) => {
         try {
           usernameInput = await page.$(selector);
           if (usernameInput) {
+            log('Found username field: ' + selector);
             break;
           }
         } catch (e) {}
-      }
-
-      if (!usernameInput) {
       }
 
       let passwordInput = null;
@@ -456,40 +287,49 @@ export default async ({ page }) => {
         try {
           passwordInput = await page.$(selector);
           if (passwordInput) {
+            log('Found password field: ' + selector);
             break;
           }
         } catch (e) {}
       }
 
-      if (!passwordInput) {
-      }
-
       if (usernameInput && passwordInput) {
+        log('Filling login credentials...');
         await usernameInput.type(username);
         await passwordInput.type(password);
 
-        // Find and click submit button - including DIVs and SPANs
+        // Find and click submit button with multilingual support
+        // Including div/span for React Native Web and modern frameworks
         const submitSelectors = [
           'button[type="submit"]',
           'input[type="submit"]',
           'button:has-text("Login")',
+          'button:has-text("Log in")',
           'button:has-text("Sign in")',
           'button:has-text("Se connecter")',
-           'button:has-text("Me connecter")',
-  'button[type="submit"]',
-  'button:contains("Me connecter")',
           'button:has-text("Connexion")',
-           'button:has-text("connexion")',
-           'div:has-text("Me connecter")',
-           'div:has-text("connexion")',
-            'div:has-text("submit")',
-          'div:has-text("Se connecter")',
-          'div:has-text("Login")',
-          'div:has-text("Sign in")',
-          'span:has-text("Se connecter")',
-          'span:has-text("Login")',
-          'a:has-text("Se connecter")',
-          'a:has-text("Login")'
+          'button:has-text("Entrer")',
+          'button:has-text("Valider")',
+          'button[value*="login" i]',
+          'button[value*="connexion" i]',
+          'input[value*="login" i]',
+          'input[value*="connexion" i]',
+          // React Native Web, Vue.js, and other frameworks using div/span
+          'div[role="button"]:has-text("Se connecter")',
+          'div[role="button"]:has-text("Connexion")',
+          'div[role="button"]:has-text("Login")',
+          'div[role="button"]:has-text("Sign in")',
+          'div[tabindex="0"]:has-text("Se connecter")',
+          'div[tabindex="0"]:has-text("Connexion")',
+          'div[tabindex="0"]:has-text("Login")',
+          'div[tabindex="0"]:has-text("Sign in")',
+          'span[role="button"]:has-text("Se connecter")',
+          'span[role="button"]:has-text("Login")',
+          // Generic clickable elements near password fields
+          'div[class*="btn"]:has-text("Se connecter")',
+          'div[class*="btn"]:has-text("Login")',
+          'div[class*="button"]:has-text("Se connecter")',
+          'div[class*="button"]:has-text("Login")'
         ];
 
         let submitButton = null;
@@ -497,208 +337,170 @@ export default async ({ page }) => {
           try {
             submitButton = await page.$(selector);
             if (submitButton) {
+              log('Found submit button: ' + selector);
               break;
             }
           } catch (e) {}
         }
 
-        if (!submitButton) {
-        }
-
         if (submitButton) {
+          log('Clicking login button...');
           await Promise.all([
-            page.waitForNavigation({ waitUntil: 'load', timeout: 15000 }).catch(() => {}),
+            page.waitForNavigation({ waitUntil: 'networkidle0', timeout: 15000 }).catch(() => {}),
             submitButton.click()
           ]);
 
-          // INCREASED: Wait longer for dynamic applications to render error messages
-          await wait(5000);
-        } else {
-          await passwordInput.press('Enter');
-          // INCREASED: Same wait time for Enter key submission
-          await wait(5000);
-        }
+          await wait(3000);
 
-        // Verify login success by checking for error messages
-        // STEP 1: Check if API interceptor caught a failure
-        if (loginFailed) {
-          return {
-            error: 'Login failed: ' + loginFailedReason + '. Please verify your credentials.',
-            features: [],
-            loginSuccess: false,
-            loginAttempted: true,
-            loginError: loginFailedReason,
-            pagesAnalyzed: 0
-          };
-        }
+          // Verify login success by checking for error messages or login form still present
+          log('Verifying login success...');
+          const loginFailed = await page.evaluate(() => {
+            // Check for error messages (French and English)
+            const errorSelectors = [
+              'div[class*="error"]', 'span[class*="error"]', 'p[class*="error"]',
+              'div[class*="alert"]', 'div[class*="danger"]', 'div[class*="invalid"]',
+              'div[role="alert"]', '[aria-invalid="true"]'
+            ];
 
-
-        // STEP 1.5: Check only explicit error notification elements (NO text scanning)
-
-        const vueErrorDetection = await page.evaluate(() => {
-          return new Promise((resolve) => {
-            setTimeout(() => {
-              // Only check for explicit error/alert notification elements
-              // NO text scanning to avoid false positives
-              const notificationSelectors = [
-                '[role="alert"]',
-                '[class*="toast"][class*="error"]',
-                '[class*="notification"][class*="error"]',
-                '[class*="alert-danger"]',
-                '[class*="alert-error"]',
-                'div[class*="error"][class*="message"]'
-              ];
-
-              for (const selector of notificationSelectors) {
-                const elements = document.querySelectorAll(selector);
-                for (const el of elements) {
-                  const text = el.textContent?.trim() || '';
-                  // Only consider visible elements with actual text
-                  const isVisible = el.offsetParent !== null;
-                  if (isVisible && text.length > 5 && text.length < 200) {
-                    resolve({ failed: true, message: text });
-                    return;
-                  }
+            for (const selector of errorSelectors) {
+              const elements = document.querySelectorAll(selector);
+              for (const el of elements) {
+                const text = el.textContent?.toLowerCase() || '';
+                // Check for common error messages
+                if (text.includes('incorrect') || text.includes('invalid') || text.includes('wrong') ||
+                    text.includes('failed') || text.includes('erreur') || text.includes('incorrecte') ||
+                    text.includes('invalide') || text.includes('échoué') || text.includes('echec')) {
+                  return { failed: true, message: el.textContent?.trim() || 'Login failed' };
                 }
               }
-
-              resolve({ failed: false });
-            }, 2000);
-          });
-        });
-
-
-        if (vueErrorDetection.failed) {
-          return {
-            error: 'Login failed: ' + vueErrorDetection.message,
-            features: [],
-            loginSuccess: false,
-            loginAttempted: true,
-            loginError: vueErrorDetection.message,
-            pagesAnalyzed: 0,
-            networkRequests,
-            networkResponses
-          };
-        }
-
-
-        // STEP 2: Check URL redirection
-        const currentUrl = await page.url();
-
-        if (currentUrl.includes('login') || currentUrl.includes('connexion')) {
-          return {
-            error: 'Login failed: Redirection to authenticated page did not occur',
-            features: [],
-            loginSuccess: false,
-            loginAttempted: true,
-            loginError: 'No redirection after login',
-            pagesAnalyzed: 0,
-            networkRequests,
-            networkResponses
-          };
-        }
-
-
-        // STEP 3: Check DOM for error messages as fallback
-        const domLoginError = await page.evaluate(() => {
-          // Check for error messages in TWO ways:
-          // 1. Elements with error-related classes
-          // 2. ANY visible element containing error text
-
-          // STEP 1: Check error-styled elements
-          const errorSelectors = [
-            'div[class*="error"]', 'span[class*="error"]', 'p[class*="error"]',
-            'div[class*="alert"]', 'div[class*="danger"]', 'div[class*="invalid"]',
-            'div[role="alert"]', '[aria-invalid="true"]',
-            'span[class*="alert"]', 'p[class*="alert"]',
-            'div[class*="notification"]', 'div[class*="toast"]',
-            'div[class*="message"]', 'span[class*="message"]'
-          ];
-
-          for (const selector of errorSelectors) {
-            const elements = document.querySelectorAll(selector);
-            for (const el of elements) {
-              const rect = el.getBoundingClientRect();
-              const style = window.getComputedStyle(el);
-              const isVisible = rect.width > 0 && rect.height > 0 &&
-                               style.display !== 'none' &&
-                               style.visibility !== 'hidden' &&
-                               parseFloat(style.opacity) > 0;
-
-              if (!isVisible) continue;
-
-              const text = el.textContent?.trim() || '';
-
-              // Only consider elements with short error messages (not containers)
-              // and only if they contain actual error text
-              if (text.length > 10 && text.length < 100) {
-                return { failed: true, message: text };
-              }
             }
+
+            // Check if password field is still present (usually means login failed)
+            const passwordField = document.querySelector('input[type="password"]');
+            const currentUrl = window.location.href;
+
+            // If password field exists and URL contains 'login', likely still on login page
+            if (passwordField && (currentUrl.includes('login') || currentUrl.includes('auth') || currentUrl.includes('signin'))) {
+              return { failed: true, message: 'Still on login page - credentials may be incorrect' };
+            }
+
+            return { failed: false, message: '' };
+          });
+
+          if (loginFailed.failed) {
+            log('Login failed: ' + loginFailed.message);
+            return {
+              error: 'Login failed: ' + loginFailed.message + '. Please verify your credentials.',
+              features: [],
+              loginSuccess: false,
+              pagesAnalyzed: 0,
+              logs: logs
+            };
           }
 
-          // No error elements found - assume success
-          return { failed: false, message: 'No error detected' };
-        });
+          loginSuccess = true;
+          log('Login completed successfully');
+        } else {
+          // Fallback: try to find any clickable element with login/connexion text
+          log('Submit button not found with standard selectors, trying generic search...');
 
-        if (domLoginError.failed) {
-          return {
-            error: 'Login failed: ' + domLoginError.message + '. Please verify your credentials.',
-            features: [],
-            loginSuccess: false,
-            loginAttempted: true,
-            loginError: domLoginError.message,
-            pagesAnalyzed: 0,
-            networkRequests,
-            networkResponses
-          };
+          const genericSubmit = await page.evaluate(() => {
+            const elements = document.querySelectorAll('button, div[role="button"], div[tabindex="0"], span[role="button"], a, div[class*="btn"], div[class*="button"]');
+            for (const el of elements) {
+              const text = el.textContent?.toLowerCase() || '';
+              if (text.includes('connect') || text.includes('login') || text.includes('sign in') ||
+                  text.includes('entrer') || text.includes('valider')) {
+                return true;
+              }
+            }
+            return false;
+          });
+
+          if (genericSubmit) {
+            log('Found generic clickable element, clicking...');
+            await page.evaluate(() => {
+              const elements = document.querySelectorAll('button, div[role="button"], div[tabindex="0"], span[role="button"], a, div[class*="btn"], div[class*="button"]');
+              for (const el of elements) {
+                const text = el.textContent?.toLowerCase() || '';
+                if (text.includes('connect') || text.includes('login') || text.includes('sign in') ||
+                    text.includes('entrer') || text.includes('valider')) {
+                  el.click();
+                  return;
+                }
+              }
+            });
+            await wait(3000);
+            log('Login submitted via generic element');
+          } else {
+            log('No submit button found, pressing Enter...');
+            await passwordInput.press('Enter');
+            await wait(3000);
+            log('Login submitted via Enter key');
+          }
+
+          // Verify login success for fallback methods too
+          log('Verifying login success...');
+          const loginFailed = await page.evaluate(() => {
+            const errorSelectors = [
+              'div[class*="error"]', 'span[class*="error"]', 'p[class*="error"]',
+              'div[class*="alert"]', 'div[class*="danger"]', 'div[class*="invalid"]',
+              'div[role="alert"]', '[aria-invalid="true"]'
+            ];
+
+            for (const selector of errorSelectors) {
+              const elements = document.querySelectorAll(selector);
+              for (const el of elements) {
+                const text = el.textContent?.toLowerCase() || '';
+                if (text.includes('incorrect') || text.includes('invalid') || text.includes('wrong') ||
+                    text.includes('failed') || text.includes('erreur') || text.includes('incorrecte') ||
+                    text.includes('invalide') || text.includes('échoué') || text.includes('echec')) {
+                  return { failed: true, message: el.textContent?.trim() || 'Login failed' };
+                }
+              }
+            }
+
+            const passwordField = document.querySelector('input[type="password"]');
+            const currentUrl = window.location.href;
+
+            if (passwordField && (currentUrl.includes('login') || currentUrl.includes('auth') || currentUrl.includes('signin'))) {
+              return { failed: true, message: 'Still on login page - credentials may be incorrect' };
+            }
+
+            return { failed: false, message: '' };
+          });
+
+          if (loginFailed.failed) {
+            log('Login failed: ' + loginFailed.message);
+            return {
+              error: 'Login failed: ' + loginFailed.message + '. Please verify your credentials.',
+              features: [],
+              loginSuccess: false,
+              pagesAnalyzed: 0,
+              logs: logs
+            };
+          }
+
+          loginSuccess = true;
+          log('Login completed successfully');
         }
-
-        loginSuccess = true;
       } else {
-        return {
-          error: 'Login form not found on the page',
-          features: [],
-          loginSuccess: false,
-          loginAttempted: true,
-          loginError: 'Login form not found',
-          networkRequests,
-          networkResponses
-        };
+        log('Login form not found - username: ' + !!usernameInput + ', password: ' + !!passwordInput);
+        return { error: 'Login form not found on the page', features: [], loginSuccess: false, logs: logs };
       }
     }
 
     // Step 2: Analyze each URL
     for (let i = 0; i < urls.length; i++) {
       const targetUrl = urls[i];
+      log('Analyzing page ' + (i + 1) + '/' + urls.length + ': ' + targetUrl);
 
       try {
-        // Navigate with multiple wait strategies (fallback if networkidle fails)
-        try {
-          await page.goto(targetUrl, { waitUntil: 'networkidle', timeout: 30000 });
-        } catch (e) {
-          await page.goto(targetUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
-        }
+        await page.goto(targetUrl, { waitUntil: 'networkidle0', timeout: 30000 });
+        await wait(2000);
+        log('Page loaded, extracting elements...');
 
-        // Wait for common framework indicators
-        await Promise.race([
-          page.waitForSelector('button, [role="button"], a, input, form', { timeout: 5000 }),
-          wait(5000)
-        ]).catch(() => {});
-
-        // Additional wait for animations and transitions
-        await wait(3000);
-
-
-        // Extract elements after JavaScript execution - with retry logic
-        let pageFeatures = [];
-        let attempts = 0;
-        const maxAttempts = 3;
-
-        while (attempts < maxAttempts && pageFeatures.length === 0) {
-          attempts++;
-
-          pageFeatures = await page.evaluate((pageUrl) => {
+        // Extract elements after JavaScript execution
+        const pageFeatures = await page.evaluate((pageUrl) => {
           const features = [];
 
           // Forms
@@ -715,7 +517,7 @@ export default async ({ page }) => {
               placeholder: el.getAttribute('placeholder') || '',
             }));
 
-            const fieldNames = inputDetails.map(i => (i.name + ' ' + i.placeholder).toLowerCase()).join(' ');
+            const fieldNames = inputDetails.map(i => \`\${i.name} \${i.placeholder}\`.toLowerCase()).join(' ');
 
             let formType = 'data-entry';
             let formPurpose = 'Data Entry Form';
@@ -743,66 +545,16 @@ export default async ({ page }) => {
             });
           });
 
-          // Virtual Forms (no <form> tag) - Detect grouped inputs
-          // This handles modern React/Vue SPAs that don't use <form> tags
-          const allInputs = document.querySelectorAll('input[type="email"], input[type="text"], input[type="password"]');
-          const inputsOutsideForms = Array.from(allInputs).filter(input => !input.closest('form'));
-
-          if (inputsOutsideForms.length >= 2) {
-            // Check if we have email + password combination (login form)
-            const hasEmail = inputsOutsideForms.some(input =>
-              input.type === 'email' ||
-              (input.placeholder || '').toLowerCase().includes('email') ||
-              (input.placeholder || '').toLowerCase().includes('e-mail') ||
-              (input.placeholder || '').toLowerCase().includes('mail')
-            );
-
-            const hasPassword = inputsOutsideForms.some(input =>
-              input.type === 'password' ||
-              (input.placeholder || '').toLowerCase().includes('password') ||
-              (input.placeholder || '').toLowerCase().includes('mot de passe')
-            );
-
-            if (hasEmail && hasPassword && forms.length === 0) {
-              // This is a virtual login form
-              const inputDetails = inputsOutsideForms.map(el => ({
-                name: el.getAttribute('name') || el.getAttribute('id') || el.getAttribute('placeholder') || '',
-                type: el.getAttribute('type') || 'text',
-                placeholder: el.getAttribute('placeholder') || '',
-              }));
-
-              features.push({
-                type: 'form',
-                formType: 'login',
-                purpose: 'Login Form (Virtual)',
-                inputs: inputDetails,
-                pageUrl
-              });
-            }
-          }
-
-          // Buttons and clickable elements - COMPREHENSIVE detection
-          const buttons = document.querySelectorAll(
-            'button, input[type="button"], input[type="submit"], ' +
-            '[role="button"], [onclick], ' +
-            'div[class*="button" i], div[class*="btn" i], ' +
-            'span[class*="button" i], span[class*="btn" i], ' +
-            'a[class*="button" i], a[class*="btn" i], ' +
-            '[class*="clickable" i], [class*="action" i]'
-          );
-
-          const seenButtons = new Set();
+          // Buttons
+          const buttons = document.querySelectorAll('button, input[type="button"], input[type="submit"]');
           buttons.forEach((button, index) => {
-            if (index >= 30) return;
+            if (index >= 15) return;
 
-            // Get text from multiple sources
-            const text = button.textContent?.trim() || button.getAttribute('value') || button.getAttribute('title') || '';
+            const text = button.textContent?.trim() || button.getAttribute('value') || '';
             const ariaLabel = button.getAttribute('aria-label') || '';
-            const displayText = (text || ariaLabel).trim();
+            const displayText = text || ariaLabel;
 
-            // Skip duplicates and invalid entries
-            if (displayText.length > 0 && displayText.length < 150 && !seenButtons.has(displayText)) {
-              seenButtons.add(displayText);
+            if (displayText.length > 0 && displayText.length < 50) {
               features.push({
                 type: 'button',
                 text: displayText,
@@ -811,18 +563,15 @@ export default async ({ page }) => {
             }
           });
 
-          // Links - improved detection
+          // Links
           const links = document.querySelectorAll('a[href]');
-          const seenLinks = new Set();
           links.forEach((link, index) => {
-            if (index >= 25) return;
+            if (index >= 15) return;
 
             const href = link.getAttribute('href');
-            const text = link.textContent?.trim() || link.getAttribute('title') || '';
+            const text = link.textContent?.trim() || '';
 
-            if (href && !href.startsWith('#') && !href.startsWith('javascript:') &&
-                text.length > 0 && text.length < 100 && !seenLinks.has(text)) {
-              seenLinks.add(text);
+            if (href && !href.startsWith('#') && !href.startsWith('javascript:') && text.length > 0 && text.length < 50) {
               features.push({
                 type: 'link',
                 text,
@@ -832,41 +581,33 @@ export default async ({ page }) => {
             }
           });
 
-          // Debug: Count each type
-          const formCount = features.filter(f => f.type === 'form').length;
-          const buttonCount = features.filter(f => f.type === 'button').length;
-          const linkCount = features.filter(f => f.type === 'link').length;
-
-
           return features;
-          }, targetUrl);
+        }, targetUrl);
 
-
-          // If no features found, wait and retry
-          if (pageFeatures.length === 0 && attempts < maxAttempts) {
-            await wait(2000);
-          }
-        }
-
+        log('Found ' + pageFeatures.length + ' features on ' + targetUrl);
         features.push(...pageFeatures);
 
       } catch (error) {
-        // Silent error handling
+        log('Error analyzing ' + targetUrl + ': ' + error.message);
       }
     }
 
+    log('Total features found: ' + features.length);
 
     return {
       features,
       loginSuccess,
-      pagesAnalyzed: urls.length
+      pagesAnalyzed: urls.length,
+      logs: logs
     };
 
   } catch (error) {
+    log('Script error: ' + error.message);
     return {
       error: error.message,
       features: [],
-      loginSuccess: false
+      loginSuccess: false,
+      logs: logs
     };
   }
 };
