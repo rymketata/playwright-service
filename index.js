@@ -537,7 +537,14 @@ export default async ({ page }) => {
         console.log('Total network responses:', networkResponses.length);
         console.log('');
         console.log('--- REQUEST SUMMARY ---');
-        
+        networkRequests.forEach((req, idx) => {
+          console.log('[' + (idx + 1) + '] ' + req.method + ' ' + req.url);
+        });
+        console.log('');
+        console.log('--- RESPONSE SUMMARY ---');
+        networkResponses.forEach((res, idx) => {
+          console.log('[' + (idx + 1) + '] ' + res.status + ' ' + res.url + ' (' + res.contentType + ')');
+        });
         console.log('');
         console.log('Checking for login errors...');
 
@@ -576,42 +583,54 @@ export default async ({ page }) => {
 
               console.log('Visible text content length:', visibleText.length);
 
-              // Error patterns in French and English
-              const errorPatterns = [
-                'incorrect', 'incorrecte', 'erreur', 'invalid', 'wrong',
-                'mauvais', 'faux', 'failed', 'échoué', 'échec',
-                'identifiant', 'mot de passe', 'connexion'
+              // STRICT error detection - only look for explicit error phrases
+              const strictErrorPhrases = [
+                'identifiant incorrect',
+                'identifiants incorrects',
+                'mot de passe incorrect',
+                'login incorrect',
+                'connexion échouée',
+                'échec de connexion',
+                'erreur de connexion',
+                'invalid credentials',
+                'invalid login',
+                'login failed',
+                'authentication failed',
+                'incorrect username',
+                'incorrect password',
+                'mauvais identifiants',
+                'identifiant invalide',
+                'mot de passe invalide'
               ];
 
-              // Check for login error combinations
-              const hasLoginError = errorPatterns.some(pattern =>
-                visibleText.includes(pattern) &&
-                (visibleText.includes('login') ||
-                 visibleText.includes('connexion') ||
-                 visibleText.includes('identifiant') ||
-                 visibleText.includes('password') ||
-                 visibleText.includes('mot de passe'))
-              );
+              // Check for explicit error phrases only
+              let foundErrorPhrase = null;
+              for (const phrase of strictErrorPhrases) {
+                if (visibleText.includes(phrase)) {
+                  foundErrorPhrase = phrase;
+                  console.log('Found explicit error phrase:', phrase);
+                  break;
+                }
+              }
 
-              if (hasLoginError) {
-                // Find the exact error message
+              if (foundErrorPhrase) {
+                // Find the element containing the error
                 const errorElements = Array.from(document.querySelectorAll('*'))
                   .filter(el => {
                     const text = el.textContent?.toLowerCase() || '';
-                    return errorPatterns.some(pattern => text.includes(pattern)) &&
-                           text.length < 200;
+                    return text.includes(foundErrorPhrase) && text.length < 200;
                   });
 
                 const errorMessage = errorElements[0]?.textContent?.trim() || 'Identifiants incorrects';
-                console.log('Found login error via text search:', errorMessage);
+                console.log('Found login error via strict text search:', errorMessage);
                 resolve({ failed: true, message: errorMessage });
                 return;
               }
 
-              // Method 2: Search notification/toast elements
+              // Method 2: Search notification/toast/alert elements with STRICT matching
               const notificationSelectors = [
                 '[role="alert"]', '[class*="toast"]', '[class*="notification"]',
-                '[class*="message"]', '[class*="error"]', '[class*="alert"]',
+                '[class*="error"]', '[class*="alert"]',
                 '[class*="invalid"]', '[class*="danger"]'
               ];
 
@@ -620,7 +639,8 @@ export default async ({ page }) => {
                 for (const el of elements) {
                   const text = el.textContent?.toLowerCase() || '';
                   if (text && text.length > 0 && text.length < 500) {
-                    const hasError = errorPatterns.some(pattern => text.includes(pattern));
+                    // Use strict error phrases only
+                    const hasError = strictErrorPhrases.some(phrase => text.includes(phrase));
                     if (hasError) {
                       console.log('Found login error in notification:', el.textContent.trim());
                       resolve({ failed: true, message: el.textContent.trim() });
