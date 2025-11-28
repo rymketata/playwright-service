@@ -108,11 +108,26 @@ app.post('/analyze', async (req, res) => {
     // Filter out undefined/empty values
     targetUrls = targetUrls.filter(u => u && u.trim());
 
-    console.log(`Analyzing ${targetUrls.length} page(s):`, targetUrls);
+    console.log('=== RECEIVED REQUEST ===');
+    console.log('Request body:', JSON.stringify(req.body, null, 2));
+    console.log('');
+    console.log('=== ANALYZING ' + targetUrls.length + ' PAGE(S) ===');
+    console.log('Target URLs:', targetUrls);
+    console.log('');
 
     if (loginConfig) {
-      console.log(`Login config provided for: ${loginConfig.loginUrl}`);
+      console.log('Login config provided for:', loginConfig.loginUrl);
+      console.log('Login config details:', JSON.stringify({
+        hasUsername: !!loginConfig.username,
+        hasPassword: !!loginConfig.password,
+        hasTestUsername: !!loginConfig.testUsername,
+        hasTestPassword: !!loginConfig.testPassword,
+        loginUrl: loginConfig.loginUrl
+      }));
+    } else {
+      console.log('No login config provided');
     }
+    console.log('');
 
     // Build the Playwright script
     const script = buildPlaywrightScript(targetUrls, loginConfig);
@@ -165,7 +180,22 @@ app.post('/analyze', async (req, res) => {
     // Check if login was explicitly marked as failed
     if (scriptOutput.loginSuccess === false && scriptOutput.loginAttempted === true) {
       const errorMsg = scriptOutput.loginError || 'Login failed. Please verify your credentials.';
-      console.error('Login failed:', errorMsg);
+      console.log('');
+      console.log('=== LOGIN FAILURE DETECTED ===');
+      console.log('Error:', errorMsg);
+      if (scriptOutput.networkRequests) {
+        console.log('Network requests during login:', scriptOutput.networkRequests.length);
+      }
+      if (scriptOutput.networkResponses) {
+        console.log('Network responses during login:', scriptOutput.networkResponses.length);
+        console.log('Response summary:');
+        scriptOutput.networkResponses.forEach((res, idx) => {
+          if (idx < 10) { // Show first 10 responses
+            console.log('  [' + (idx + 1) + '] ' + res.status + ' ' + res.url);
+          }
+        });
+      }
+      console.log('');
       return res.status(500).json({
         success: false,
         message: `Login failed: ${errorMsg}`,
@@ -183,6 +213,14 @@ app.post('/analyze', async (req, res) => {
           screenshots: scriptOutput.screenshots
         }
       });
+    }
+
+    // Log login success if login was attempted
+    if (scriptOutput.loginAttempted && scriptOutput.loginSuccess) {
+      console.log('');
+      console.log('=== LOGIN SUCCESS ===');
+      console.log('✓ User successfully authenticated');
+      console.log('');
     }
 
     const tests = generateTestCasesFromFeatures(scriptOutput.features);
@@ -224,13 +262,6 @@ export default async ({ page }) => {
     const password = loginConfig?.password || loginConfig?.testPassword;
 
     if (loginConfig && loginConfig.loginUrl && username && password) {
-      console.log('========================================');
-      console.log('STARTING LOGIN PROCESS');
-      console.log('========================================');
-      console.log('Login URL:', loginConfig.loginUrl);
-      console.log('Username:', username);
-      console.log('Password length:', password.length);
-
       // Track all network requests during login
       const networkRequests = [];
       const networkResponses = [];
@@ -244,7 +275,6 @@ export default async ({ page }) => {
           timestamp: new Date().toISOString()
         };
         networkRequests.push(requestInfo);
-        console.log('[REQUEST]', request.method(), request.url());
       });
 
       // Set up API response interceptor BEFORE navigation
@@ -261,7 +291,6 @@ export default async ({ page }) => {
           timestamp: new Date().toISOString()
         };
         networkResponses.push(responseInfo);
-        console.log('[RESPONSE]', response.status(), response.url());
         const url = response.url();
         if (url.includes('login_fetch.php')) {
     try {
@@ -271,7 +300,6 @@ export default async ({ page }) => {
       if (text.includes('IncorrectLogin')) {
         loginFailed = true;
         loginFailedReason = 'Identifiants incorrects (détecté via login_fetch.php)';
-        console.log('✓ Login failure detected in login_fetch.php response');
       }
       
       // Si c'est du JSON, vérifier la structure
@@ -304,7 +332,6 @@ export default async ({ page }) => {
 
               // Case 1: Empty array => incorrect credentials
               if (Array.isArray(json) && json.length === 0) {
-                console.log('API returned empty array - login likely failed');
                 loginFailed = true;
                 loginFailedReason = 'API returned empty result (no user found)';
               }
@@ -344,17 +371,10 @@ export default async ({ page }) => {
         }
       });
 
-      console.log('Navigating to login page...');
       await page.goto(loginConfig.loginUrl, { waitUntil: 'load', timeout: 30000 });
-      console.log('✓ Page loaded successfully');
 
-      console.log('Waiting 2 seconds for page to stabilize...');
       await wait(2000);
-      console.log('✓ Wait complete');
 
-      console.log('----------------------------------------');
-      console.log('SEARCHING FOR LOGIN FORM FIELDS');
-      console.log('----------------------------------------');
 
       // Try to find and fill login form - comprehensive selectors for both French and English
       const usernameSelectors = [
@@ -418,48 +438,35 @@ export default async ({ page }) => {
         'form input[type="password"]'
       ];
 
-      console.log('Searching for username field...');
       let usernameInput = null;
       for (const selector of usernameSelectors) {
         try {
           usernameInput = await page.$(selector);
           if (usernameInput) {
-            console.log('✓ Found username field:', selector);
             break;
           }
         } catch (e) {}
       }
 
       if (!usernameInput) {
-        console.log('✗ Username field not found');
       }
 
-      console.log('Searching for password field...');
       let passwordInput = null;
       for (const selector of passwordSelectors) {
         try {
           passwordInput = await page.$(selector);
           if (passwordInput) {
-            console.log('✓ Found password field:', selector);
             break;
           }
         } catch (e) {}
       }
 
       if (!passwordInput) {
-        console.log('✗ Password field not found');
       }
 
       if (usernameInput && passwordInput) {
-        console.log('----------------------------------------');
-        console.log('FILLING LOGIN CREDENTIALS');
-        console.log('----------------------------------------');
-        console.log('Typing username...');
         await usernameInput.type(username);
-        console.log('✓ Username filled');
-        console.log('Typing password...');
         await passwordInput.type(password);
-        console.log('✓ Password filled');
 
         // Find and click submit button - including DIVs and SPANs
         const submitSelectors = [
@@ -485,73 +492,36 @@ export default async ({ page }) => {
           'a:has-text("Login")'
         ];
 
-        console.log('Searching for submit button...');
         let submitButton = null;
         for (const selector of submitSelectors) {
           try {
             submitButton = await page.$(selector);
             if (submitButton) {
-              console.log('✓ Found submit button:', selector);
               break;
             }
           } catch (e) {}
         }
 
         if (!submitButton) {
-          console.log('✗ Submit button not found');
         }
 
         if (submitButton) {
-          console.log('----------------------------------------');
-          console.log('SUBMITTING LOGIN FORM');
-          console.log('----------------------------------------');
-          console.log('Clicking login button...');
           await Promise.all([
             page.waitForNavigation({ waitUntil: 'load', timeout: 15000 }).catch(() => {}),
             submitButton.click()
           ]);
-          console.log('✓ Button clicked');
 
           // INCREASED: Wait longer for dynamic applications to render error messages
-          console.log('Waiting 5 seconds for potential error messages...');
           await wait(5000);
-          console.log('✓ Wait complete');
         } else {
-          console.log('----------------------------------------');
-          console.log('SUBMITTING VIA ENTER KEY');
-          console.log('----------------------------------------');
-          console.log('Submit button not found, pressing Enter...');
           await passwordInput.press('Enter');
-          console.log('✓ Enter key pressed');
           // INCREASED: Same wait time for Enter key submission
-          console.log('Waiting 5 seconds for response...');
           await wait(5000);
-          console.log('✓ Wait complete');
         }
 
         // Verify login success by checking for error messages
-        console.log('========================================');
-        console.log('VERIFYING LOGIN SUCCESS');
-        console.log('========================================');
-        console.log('Total network requests:', networkRequests.length);
-        console.log('Total network responses:', networkResponses.length);
-        console.log('');
-        console.log('--- REQUEST SUMMARY ---');
-        networkRequests.forEach((req, idx) => {
-          console.log('[' + (idx + 1) + '] ' + req.method + ' ' + req.url);
-        });
-        console.log('');
-        console.log('--- RESPONSE SUMMARY ---');
-        networkResponses.forEach((res, idx) => {
-          console.log('[' + (idx + 1) + '] ' + res.status + ' ' + res.url + ' (' + res.contentType + ')');
-        });
-        console.log('');
-        console.log('Checking for login errors...');
-
         // STEP 1: Check if API interceptor caught a failure
         if (loginFailed) {
-          console.log('✓ Login failure detected via API interceptor');
-          console.log('Login failed (detected by API interceptor): ' + loginFailedReason);
           return {
             error: 'Login failed: ' + loginFailedReason + '. Please verify your credentials.',
             features: [],
@@ -562,10 +532,8 @@ export default async ({ page }) => {
           };
         }
 
-        console.log('✓ No API login failure detected');
 
         // STEP 1.5: Enhanced Vue/React error detection
-        console.log('Starting enhanced DOM error detection...');
 
         const vueErrorDetection = await page.evaluate(() => {
           return new Promise((resolve) => {
@@ -581,7 +549,6 @@ export default async ({ page }) => {
                 .map(el => el.textContent?.toLowerCase() || '')
                 .join(' ');
 
-              console.log('Visible text content length:', visibleText.length);
 
               // STRICT error detection - only look for explicit error phrases
               const strictErrorPhrases = [
@@ -608,7 +575,6 @@ export default async ({ page }) => {
               for (const phrase of strictErrorPhrases) {
                 if (visibleText.includes(phrase)) {
                   foundErrorPhrase = phrase;
-                  console.log('Found explicit error phrase:', phrase);
                   break;
                 }
               }
@@ -622,7 +588,6 @@ export default async ({ page }) => {
                   });
 
                 const errorMessage = errorElements[0]?.textContent?.trim() || 'Identifiants incorrects';
-                console.log('Found login error via strict text search:', errorMessage);
                 resolve({ failed: true, message: errorMessage });
                 return;
               }
@@ -642,7 +607,6 @@ export default async ({ page }) => {
                     // Use strict error phrases only
                     const hasError = strictErrorPhrases.some(phrase => text.includes(phrase));
                     if (hasError) {
-                      console.log('Found login error in notification:', el.textContent.trim());
                       resolve({ failed: true, message: el.textContent.trim() });
                       return;
                     }
@@ -658,7 +622,6 @@ export default async ({ page }) => {
                 document.querySelector('input[placeholder*="mot de passe" i]') !== null;
 
               if (hasLoginIndicators && (currentUrl.includes('login') || pageTitle.includes('login'))) {
-                console.log('Still on login page after submission');
                 resolve({ failed: true, message: 'Reste sur la page de login après soumission' });
                 return;
               }
@@ -668,13 +631,8 @@ export default async ({ page }) => {
           });
         });
 
-        console.log('DOM error detection result:', vueErrorDetection);
 
         if (vueErrorDetection.failed) {
-          console.log('✓ Login failure detected in DOM:', vueErrorDetection.message);
-          console.log('========================================');
-          console.log('LOGIN FAILED - DOM ERROR DETECTED');
-          console.log('========================================');
           return {
             error: 'Login failed: ' + vueErrorDetection.message,
             features: [],
@@ -687,18 +645,11 @@ export default async ({ page }) => {
           };
         }
 
-        console.log('✓ No DOM login failure detected');
 
         // STEP 2: Check URL redirection
         const currentUrl = await page.url();
-        console.log('Current URL after login attempt:', currentUrl);
-        console.log('Original login URL:', loginConfig.loginUrl);
 
         if (currentUrl.includes('login') || currentUrl.includes('connexion')) {
-          console.log('⚠ Still on login page - assuming login failed');
-          console.log('========================================');
-          console.log('LOGIN FAILED - NO REDIRECTION');
-          console.log('========================================');
           return {
             error: 'Login failed: Redirection to authenticated page did not occur',
             features: [],
@@ -711,7 +662,6 @@ export default async ({ page }) => {
           };
         }
 
-        console.log('✓ URL changed after login (redirection occurred)');
 
         // STEP 3: Check DOM for error messages as fallback
         const domLoginError = await page.evaluate(() => {
@@ -794,11 +744,6 @@ export default async ({ page }) => {
         });
 
         if (domLoginError.failed) {
-          console.log('✓ Login failure detected in DOM fallback check');
-          console.log('Login failed (detected in DOM): ' + domLoginError.message);
-          console.log('========================================');
-          console.log('LOGIN FAILED - DOM FALLBACK ERROR');
-          console.log('========================================');
           return {
             error: 'Login failed: ' + domLoginError.message + '. Please verify your credentials.',
             features: [],
@@ -811,16 +756,8 @@ export default async ({ page }) => {
           };
         }
 
-        console.log('✓ No DOM fallback errors detected');
         loginSuccess = true;
-        console.log('========================================');
-        console.log('LOGIN SUCCESSFUL! ✓');
-        console.log('========================================');
       } else {
-        console.log('========================================');
-        console.log('LOGIN FORM NOT FOUND');
-        console.log('========================================');
-        console.log('Could not locate username or password fields');
         return {
           error: 'Login form not found on the page',
           features: [],
@@ -836,17 +773,14 @@ export default async ({ page }) => {
     // Step 2: Analyze each URL
     for (let i = 0; i < urls.length; i++) {
       const targetUrl = urls[i];
-      console.log('Analyzing page ' + (i + 1) + '/' + urls.length + ': ' + targetUrl);
 
       try {
         // Navigate with multiple wait strategies (fallback if networkidle fails)
         try {
           await page.goto(targetUrl, { waitUntil: 'networkidle', timeout: 30000 });
         } catch (e) {
-          console.log('networkidle failed, falling back to domcontentloaded...');
           await page.goto(targetUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
         }
-        console.log('Page loaded, waiting for dynamic content...');
 
         // Wait for common framework indicators
         await Promise.race([
@@ -857,7 +791,6 @@ export default async ({ page }) => {
         // Additional wait for animations and transitions
         await wait(3000);
 
-        console.log('Starting element extraction...');
 
         // Extract elements after JavaScript execution - with retry logic
         let pageFeatures = [];
@@ -866,7 +799,6 @@ export default async ({ page }) => {
 
         while (attempts < maxAttempts && pageFeatures.length === 0) {
           attempts++;
-          console.log('Extraction attempt ' + attempts + '/' + maxAttempts);
 
           pageFeatures = await page.evaluate((pageUrl) => {
           const features = [];
@@ -948,7 +880,6 @@ export default async ({ page }) => {
                 inputs: inputDetails,
                 pageUrl
               });
-              console.log('✓ Detected virtual login form (no <form> tag)');
             }
           }
 
@@ -1008,29 +939,24 @@ export default async ({ page }) => {
           const buttonCount = features.filter(f => f.type === 'button').length;
           const linkCount = features.filter(f => f.type === 'link').length;
 
-          console.log('Found - Forms: ' + formCount + ', Buttons: ' + buttonCount + ', Links: ' + linkCount);
 
           return features;
           }, targetUrl);
 
-          console.log('Attempt ' + attempts + ': Found ' + pageFeatures.length + ' features');
 
           // If no features found, wait and retry
           if (pageFeatures.length === 0 && attempts < maxAttempts) {
-            console.log('No features found, waiting before retry...');
             await wait(2000);
           }
         }
 
-        console.log('Total found ' + pageFeatures.length + ' features on ' + targetUrl);
         features.push(...pageFeatures);
 
       } catch (error) {
-        console.error('Error analyzing ' + targetUrl + ':', error.message);
+        // Silent error handling
       }
     }
 
-    console.log('Total features found: ' + features.length);
 
     return {
       features,
@@ -1039,7 +965,6 @@ export default async ({ page }) => {
     };
 
   } catch (error) {
-    console.error('Script error:', error.message);
     return {
       error: error.message,
       features: [],
