@@ -46,7 +46,7 @@ app.get('/test-connection', async (req, res) => {
         'Content-Type': 'application/javascript',
       },
       body: script,
-      signal: AbortSignal.timeout(30000)
+      signal: AbortSignal.timeout(50000)
     });
 
     if (!response.ok) {
@@ -221,7 +221,7 @@ export default async ({ page }) => {
     // Step 1: Handle login if credentials provided
     if (loginConfig && loginConfig.loginUrl && username && password) {
       log('Navigating to login page: ' + loginConfig.loginUrl);
-      await page.goto(loginConfig.loginUrl, { waitUntil: 'networkidle0', timeout: 30000 });
+      await page.goto(loginConfig.loginUrl, { waitUntil: 'networkidle0', timeout: 50000 });
       await wait(2000);
 
       const htmlPreview = await page.content();
@@ -495,7 +495,7 @@ export default async ({ page }) => {
       log('Analyzing page ' + (i + 1) + '/' + urls.length + ': ' + targetUrl);
 
       try {
-        await page.goto(targetUrl, { waitUntil: 'networkidle0', timeout: 30000 });
+        await page.goto(targetUrl, { waitUntil: 'networkidle0', timeout:50000 });
         await wait(2000);
         log('Page loaded, extracting elements...');
 
